@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel
+
+BACKTICK_REF = re.compile(r"`(\S+)`")
 
 
 class AuthConfig(BaseModel):
@@ -45,7 +48,30 @@ class Config(BaseModel):
     @classmethod
     def from_yaml(cls, content: str) -> "Config":
         raw = yaml.safe_load(content)
-        return cls.model_validate(raw)
+        cfg = cls.model_validate(raw)
+        cfg.validate_refs()
+        return cfg
+
+    def validate_refs(self) -> "Config":
+        """Validate backtick cross-tool references in descriptions.
+        Each `key` must refer to an existing, non-hidden exposed tool.
+        Raises ValueError with details on first invalid ref.
+        """
+        for key, entry in self.expose.items():
+            if not entry.description:
+                continue
+            for ref in BACKTICK_REF.findall(entry.description):
+                if ref not in self.expose:
+                    raise ValueError(
+                        f"Tool '{key}' description references '{ref}', "
+                        f"which does not exist in expose"
+                    )
+                if self.expose[ref].hide:
+                    raise ValueError(
+                        f"Tool '{key}' description references '{ref}', "
+                        f"which is hidden (hide: true)"
+                    )
+        return self
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Config":
