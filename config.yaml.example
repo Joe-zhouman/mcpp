@@ -1,0 +1,28 @@
+# mcpp config — copy to config.yaml and edit
+# Override path with: MCPP_CONFIG=/path/to/config.yaml
+
+upstreams:
+  - name: gh
+    url: https://api.github.com/mcp
+    auth:
+      keys:
+        - ${GITHUB_TOKEN}
+
+expose:
+  gh/search:
+    upstream: gh
+    tool: search
+    as: gh_search
+    description: |
+      Search GitHub repositories and code.
+      For detailed code search, use `gh/code`.
+    params:
+      - name: query
+      - name: sort_order
+        map_from: sort
+
+  gh/code:
+    upstream: gh
+    tool: code_search
+    as: gh_code
+    description: Search GitHub code with regex and path filters.
