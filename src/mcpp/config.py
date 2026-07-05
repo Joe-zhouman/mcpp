@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 BACKTICK_REF = re.compile(r"`(\S+)`")
 
@@ -35,7 +35,7 @@ class ParamTransform(BaseModel):
 class ExposeEntry(BaseModel):
     upstream: str        # upstream name
     tool: str            # upstream tool name
-    as_: Optional[str] = None  # display name (key is the stable ref)
+    as_: Optional[str] = Field(default=None, alias="as")  # display name (key is the stable ref)
     hide: bool = False
     description: Optional[str] = None
     params: Optional[list[ParamTransform]] = None
