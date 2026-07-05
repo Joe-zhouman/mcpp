@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 import httpx
+import yaml
 from pydantic import ValidationError
 
 from mcpp.config import Config, ExposeEntry
@@ -114,6 +115,12 @@ app = FastAPI(title="mcpp", lifespan=lifespan)
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
     body = await request.json()
+    if body is None:
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "Invalid Request: body must be a JSON object"},
+        })
     method = body.get("method")
     params = body.get("params", {})
     req_id = body.get("id")
@@ -243,7 +250,7 @@ async def update_config(request: Request):
     yaml_text = await request.body()
     try:
         new_config = Config.from_yaml(yaml_text.decode())
-    except (UnicodeDecodeError, ValueError, ValidationError) as e:
+    except (UnicodeDecodeError, ValueError, ValidationError, yaml.YAMLError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     CONFIG_PATH.write_text(yaml_text.decode())
     logger.info("Config written to %s, reloading", CONFIG_PATH)
