@@ -222,7 +222,7 @@ def _find_expose_entry(
     Returns (entry, upstream_name) or (None, None).
     """
     for key, entry in config.expose.items():
-        display_name = entry.as_ or key.split("/")[-1]
+        display_name = entry.display_name(key)
         if name_or_key in (key, display_name):
             return entry, key.split("/")[0]
     return None, None

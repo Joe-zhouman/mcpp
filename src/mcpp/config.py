@@ -40,6 +40,10 @@ class ExposeEntry(BaseModel):
     description: Optional[str] = None
     params: Optional[list[ParamTransform]] = None
 
+    def display_name(self, key: str) -> str:
+        """Return the display name: as_ if set, otherwise the last segment of key."""
+        return self.as_ or key.split("/")[-1]
+
 
 class Config(BaseModel):
     upstreams: list[UpstreamConfig]

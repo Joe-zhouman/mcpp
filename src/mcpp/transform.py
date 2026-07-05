@@ -9,7 +9,7 @@ from mcpp.upstream import Tool
 def _build_display_name_map(config: Config) -> dict[str, str]:
     """Map stable key -> display name (as_ or last segment of key)."""
     return {
-        key: entry.as_ if entry.as_ else key.split("/")[-1]
+        key: entry.display_name(key)
         for key, entry in config.expose.items()
     }
 

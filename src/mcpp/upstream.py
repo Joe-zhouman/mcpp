@@ -72,7 +72,13 @@ class HttpTransport:
         if resp.status_code == 200 and resp.headers.get("content-type", "").startswith(
             "application/json"
         ):
-            return resp.json()
+            data = resp.json()
+            if "error" in data:
+                raise RuntimeError(
+                    f"Upstream '{self.name}' JSON-RPC error: "
+                    f"{data['error'].get('message', 'unknown')}"
+                )
+            return data
         raise httpx.HTTPStatusError(
             message=f"Upstream '{self.name}' returned {resp.status_code}",
             request=resp.request,
