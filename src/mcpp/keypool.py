@@ -33,6 +33,13 @@ class KeyPool:
     def healthy_count(self) -> int:
         return len(self._keys) - len(self._bad)
 
+    def statuses(self) -> list[dict]:
+        """Return key statuses for admin display (keys are masked)."""
+        return [
+            {"index": i, "key": k[:4] + "...", "paused": k in self._bad}
+            for i, k in enumerate(self._keys)
+        ]
+
     @property
     def current(self) -> str:
         """Return the last-returned key (for marking bad after failure)."""

@@ -25,6 +25,7 @@
 <div class="tabs">
   <span class="tab active" data-tab="preview">Tool Preview</span>
   <span class="tab" data-tab="config">Config Editor</span>
+  <span class="tab" data-tab="keys">Keys</span>
 </div>
 
 <div id="preview" class="panel active">
@@ -37,6 +38,11 @@
   <button onclick="loadConfig()">Load</button>
   <button onclick="saveConfig()">Save &amp; Reload</button>
   <div id="config-status"></div>
+</div>
+
+<div id="keys" class="panel">
+  <button onclick="loadKeys()">Refresh</button>
+  <div id="keys-content"></div>
 </div>
 
 <script>
@@ -73,6 +79,43 @@ async function saveConfig() {
   } else {
     stat.textContent = 'Error: ' + (await res.text());
     stat.style.color = 'red';
+  }
+}
+
+async function loadKeys() {
+  const res = await fetch('/api/keys');
+  const data = await res.json();
+  const upstreams = Object.entries(data);
+  if (upstreams.length === 0) {
+    document.getElementById('keys-content').innerHTML = '<p>No key pools configured.</p>';
+    return;
+  }
+  let html = '';
+  for (const [name, pool] of upstreams) {
+    html += `<h3>${name} <small>(${pool.healthy_count} healthy)</small></h3>`;
+    html += '<table><thead><tr><th>Index</th><th>Key</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+    for (const k of pool.keys) {
+      const status = k.paused ? '<span style="color:red">Paused</span>' : '<span style="color:green">Active</span>';
+      const action = k.paused
+        ? `<button onclick="resumeKey('${name}', ${k.index})">Resume</button>`
+        : '—';
+      html += `<tr><td>${k.index}</td><td><code>${k.key}</code></td><td>${status}</td><td>${action}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  document.getElementById('keys-content').innerHTML = html;
+}
+
+async function resumeKey(upstream, index) {
+  const res = await fetch(`/api/keys/${upstream}/resume`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key_index: index}),
+  });
+  if (res.ok) {
+    loadKeys();
+  } else {
+    alert('Failed to resume key: ' + (await res.text()));
   }
 }
 

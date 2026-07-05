@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from os import environ
 from pathlib import Path
@@ -87,21 +88,28 @@ async def mcp_endpoint(request: Request):
     config: Config = request.app.state.config
 
     if method == "tools/list":
-        all_tools = []
-        for uc in config.upstreams:
+        async def fetch_one(uc):
             transport = request.app.state.upstreams.get(uc.name)
             if transport is None:
-                continue
+                return []
             try:
                 tools = await transport.list_tools()
                 transformed = transform_tools(uc.name, tools, config)
-                all_tools.extend(
-                    [t.model_dump(exclude_none=True) for t in transformed]
-                )
+                return [t.model_dump(exclude_none=True) for t in transformed]
             except Exception as e:
                 logger.warning(
                     "Upstream '%s' failed during tools/list: %s", uc.name, e
                 )
+                return []
+
+        results = await asyncio.gather(
+            *[fetch_one(uc) for uc in config.upstreams],
+            return_exceptions=True,
+        )
+        all_tools = []
+        for r in results:
+            if isinstance(r, list):
+                all_tools.extend(r)
         return JSONResponse({
             "jsonrpc": "2.0",
             "id": req_id,
@@ -230,18 +238,58 @@ async def update_config(request: Request):
 @app.get("/api/tools")
 async def list_tools_preview(request: Request):
     config: Config = request.app.state.config
-    all_tools = []
-    for uc in config.upstreams:
+
+    async def fetch_one(uc):
         transport = request.app.state.upstreams.get(uc.name)
         if transport is None:
-            continue
+            return []
         try:
             tools = await transport.list_tools()
             transformed = transform_tools(uc.name, tools, config)
-            all_tools.extend([t.model_dump(exclude_none=True) for t in transformed])
+            return [t.model_dump(exclude_none=True) for t in transformed]
         except Exception as e:
             logger.warning("Preview: upstream '%s' failed: %s", uc.name, e)
+            return []
+
+    results = await asyncio.gather(
+        *[fetch_one(uc) for uc in config.upstreams],
+        return_exceptions=True,
+    )
+    all_tools = []
+    for r in results:
+        if isinstance(r, list):
+            all_tools.extend(r)
     return JSONResponse(all_tools)
+
+
+@app.get("/api/keys")
+async def list_keys(request: Request):
+    """Return key pool statuses for all upstreams."""
+    result = {}
+    for name, kp in request.app.state.keypools.items():
+        result[name] = {
+            "healthy_count": kp.healthy_count,
+            "keys": kp.statuses(),
+        }
+    return JSONResponse(result)
+
+
+@app.post("/api/keys/{upstream_name}/resume")
+async def resume_key(upstream_name: str, request: Request):
+    """Resume a paused key by index."""
+    body = await request.json()
+    key_index = body.get("key_index", 0)
+    kp = request.app.state.keypools.get(upstream_name)
+    if not kp:
+        return JSONResponse(
+            {"error": "No keypool for this upstream"}, status_code=404
+        )
+    key = kp._keys[key_index]
+    kp.resume(key)
+    logger.info(
+        "Upstream '%s': key %d resumed manually", upstream_name, key_index
+    )
+    return JSONResponse({"status": "resumed", "key": key[:4] + "..."})
 
 
 @app.get("/admin")

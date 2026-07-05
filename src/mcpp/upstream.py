@@ -73,9 +73,10 @@ class HttpTransport:
             "application/json"
         ):
             return resp.json()
-        raise RuntimeError(
-            f"Upstream '{self.name}' returned {resp.status_code}. "
-            f"SSE fallback not yet implemented — use a Streamable HTTP endpoint."
+        raise httpx.HTTPStatusError(
+            message=f"Upstream '{self.name}' returned {resp.status_code}",
+            request=resp.request,
+            response=resp,
         )
 
     async def list_tools(self) -> list[Tool]:
