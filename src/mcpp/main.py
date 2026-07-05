@@ -37,6 +37,24 @@ async def _fetch_tools(transport, upstream_name, config):
         return []
 
 
+async def _fetch_all_tools(app, config: Config):
+    """Concurrently fetch and transform tools from all upstreams."""
+    async def _fetch_one(uc):
+        transport = app.state.upstreams.get(uc.name)
+        if transport is None:
+            return []
+        return await _fetch_tools(transport, uc.name, config)
+    results = await asyncio.gather(
+        *[_fetch_one(uc) for uc in config.upstreams],
+        return_exceptions=True,
+    )
+    all_tools = []
+    for r in results:
+        if isinstance(r, list):
+            all_tools.extend(r)
+    return all_tools
+
+
 def _make_get_auth(app, upstream_name):
     def get_auth():
         kp = app.state.keypools.get(upstream_name)
@@ -102,14 +120,7 @@ async def mcp_endpoint(request: Request):
     config: Config = request.app.state.config
 
     if method == "tools/list":
-        results = await asyncio.gather(
-            *[_fetch_tools(request.app.state.upstreams.get(uc.name), uc.name, config) for uc in config.upstreams],
-            return_exceptions=True,
-        )
-        all_tools = []
-        for r in results:
-            if isinstance(r, list):
-                all_tools.extend(r)
+        all_tools = await _fetch_all_tools(request.app, config)
         return JSONResponse({
             "jsonrpc": "2.0",
             "id": req_id,
@@ -247,15 +258,7 @@ async def update_config(request: Request):
 @app.get("/api/tools")
 async def list_tools_preview(request: Request):
     config: Config = request.app.state.config
-
-    results = await asyncio.gather(
-        *[_fetch_tools(request.app.state.upstreams.get(uc.name), uc.name, config) for uc in config.upstreams],
-        return_exceptions=True,
-    )
-    all_tools = []
-    for r in results:
-        if isinstance(r, list):
-            all_tools.extend(r)
+    all_tools = await _fetch_all_tools(request.app, config)
     return JSONResponse(all_tools)
 
 
@@ -297,5 +300,8 @@ async def admin_ui():
 def run():
     import uvicorn
     host = environ.get("MCPP_HOST", "127.0.0.1")
-    port = int(environ.get("MCPP_PORT", "9020"))
+    try:
+        port = int(environ.get("MCPP_PORT", "9020"))
+    except ValueError:
+        port = 9020
     uvicorn.run("mcpp.main:app", host=host, port=port, reload=False)

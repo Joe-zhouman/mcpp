@@ -79,7 +79,7 @@ class Config(BaseModel):
 
     def to_yaml(self) -> str:
         return yaml.safe_dump(
-            self.model_dump(exclude_none=True, mode="json"),
+            self.model_dump(exclude_none=True, mode="json", by_alias=True),
             default_flow_style=False,
             allow_unicode=True,
             sort_keys=False,

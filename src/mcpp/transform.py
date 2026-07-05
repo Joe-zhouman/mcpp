@@ -88,9 +88,21 @@ def param_transform_value(
         if value is None:
             continue
         if p.type == "enum" and p.mapping:
-            upstream[upstream_name] = p.mapping[value]
+            if value in p.mapping:
+                upstream[upstream_name] = p.mapping[value]
+            else:
+                raise ValueError(
+                    f"Invalid value '{value}' for enum param '{p.name}'. "
+                    f"Valid: {list(p.mapping.keys())}"
+                )
         elif p.type == "preset" and p.preset:
-            upstream |= p.preset[value]
+            if value in p.preset:
+                upstream |= p.preset[value]
+            else:
+                raise ValueError(
+                    f"Invalid value '{value}' for preset param '{p.name}'. "
+                    f"Valid: {list(p.preset.keys())}"
+                )
         else:
             upstream[upstream_name] = value
     return upstream
