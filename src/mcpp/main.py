@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 import httpx
+from pydantic import ValidationError
 
 from mcpp.config import Config, ExposeEntry
 from mcpp.upstream import HttpTransport
@@ -21,6 +22,32 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 CONFIG_PATH = Path(environ.get("MCPP_CONFIG", str(DEFAULT_CONFIG_PATH)))
+
+
+async def _fetch_tools(transport, upstream_name, config):
+    """Fetch and transform tools from one upstream. Returns list of dicts."""
+    if transport is None:
+        return []
+    try:
+        tools = await transport.list_tools()
+        transformed = transform_tools(upstream_name, tools, config)
+        return [t.model_dump(exclude_none=True) for t in transformed]
+    except Exception as e:
+        logger.warning("Upstream '%s' failed: %s", upstream_name, e)
+        return []
+
+
+def _make_get_auth(app, upstream_name):
+    def get_auth():
+        kp = app.state.keypools.get(upstream_name)
+        if kp:
+            try:
+                return f"Bearer {kp.next()}"
+            except RuntimeError:
+                logger.error("Upstream '%s': all keys exhausted", upstream_name)
+                return None
+        return None
+    return get_auth
 
 
 @asynccontextmanager
@@ -53,23 +80,10 @@ def _build_upstreams(app: FastAPI):
         else:
             logger.info("Upstream '%s': no auth", uc.name)
 
-        def make_get_auth(name: str):
-            """Capture uc.name by value, not by reference."""
-            def get_auth():
-                kp_inner = app.state.keypools.get(name)
-                if kp_inner:
-                    try:
-                        return f"Bearer {kp_inner.next()}"
-                    except RuntimeError:
-                        logger.error("Upstream '%s': all keys exhausted", name)
-                        return None
-                return None
-            return get_auth
-
         t = HttpTransport(
             name=uc.name,
             url=uc.url,
-            get_auth=make_get_auth(uc.name) if kp else None,
+            get_auth=_make_get_auth(app, uc.name) if kp else None,
             connect_timeout=uc.connect_timeout,
             read_timeout=uc.read_timeout,
         )
@@ -88,22 +102,8 @@ async def mcp_endpoint(request: Request):
     config: Config = request.app.state.config
 
     if method == "tools/list":
-        async def fetch_one(uc):
-            transport = request.app.state.upstreams.get(uc.name)
-            if transport is None:
-                return []
-            try:
-                tools = await transport.list_tools()
-                transformed = transform_tools(uc.name, tools, config)
-                return [t.model_dump(exclude_none=True) for t in transformed]
-            except Exception as e:
-                logger.warning(
-                    "Upstream '%s' failed during tools/list: %s", uc.name, e
-                )
-                return []
-
         results = await asyncio.gather(
-            *[fetch_one(uc) for uc in config.upstreams],
+            *[_fetch_tools(request.app.state.upstreams.get(uc.name), uc.name, config) for uc in config.upstreams],
             return_exceptions=True,
         )
         all_tools = []
@@ -117,7 +117,13 @@ async def mcp_endpoint(request: Request):
         })
 
     if method == "tools/call":
-        tool_name = params["name"]
+        tool_name = params.get("name")
+        if not tool_name:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32602, "message": "Missing required parameter: name"},
+            })
         arguments = params.get("arguments", {})
         entry, upstream_name = _find_expose_entry(config, tool_name)
         if entry is None:
@@ -224,7 +230,10 @@ async def get_config(request: Request):
 async def update_config(request: Request):
     """Accept YAML body, validate, write to disk, and reload."""
     yaml_text = await request.body()
-    new_config = Config.from_yaml(yaml_text.decode())
+    try:
+        new_config = Config.from_yaml(yaml_text.decode())
+    except (UnicodeDecodeError, ValueError, ValidationError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     CONFIG_PATH.write_text(yaml_text.decode())
     logger.info("Config written to %s, reloading", CONFIG_PATH)
     old_upstreams = request.app.state.upstreams
@@ -239,20 +248,8 @@ async def update_config(request: Request):
 async def list_tools_preview(request: Request):
     config: Config = request.app.state.config
 
-    async def fetch_one(uc):
-        transport = request.app.state.upstreams.get(uc.name)
-        if transport is None:
-            return []
-        try:
-            tools = await transport.list_tools()
-            transformed = transform_tools(uc.name, tools, config)
-            return [t.model_dump(exclude_none=True) for t in transformed]
-        except Exception as e:
-            logger.warning("Preview: upstream '%s' failed: %s", uc.name, e)
-            return []
-
     results = await asyncio.gather(
-        *[fetch_one(uc) for uc in config.upstreams],
+        *[_fetch_tools(request.app.state.upstreams.get(uc.name), uc.name, config) for uc in config.upstreams],
         return_exceptions=True,
     )
     all_tools = []
@@ -284,7 +281,7 @@ async def resume_key(upstream_name: str, request: Request):
         return JSONResponse(
             {"error": "No keypool for this upstream"}, status_code=404
         )
-    key = kp._keys[key_index]
+    key = kp.key_at(key_index)
     kp.resume(key)
     logger.info(
         "Upstream '%s': key %d resumed manually", upstream_name, key_index
@@ -299,4 +296,6 @@ async def admin_ui():
 
 def run():
     import uvicorn
-    uvicorn.run("mcpp.main:app", host="127.0.0.1", port=9020, reload=False)
+    host = environ.get("MCPP_HOST", "127.0.0.1")
+    port = int(environ.get("MCPP_PORT", "9020"))
+    uvicorn.run("mcpp.main:app", host=host, port=port, reload=False)

@@ -40,6 +40,9 @@ class KeyPool:
             for i, k in enumerate(self._keys)
         ]
 
+    def key_at(self, index: int) -> str:
+        return self._keys[index]
+
     @property
     def current(self) -> str:
         """Return the last-returned key (for marking bad after failure)."""
