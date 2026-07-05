@@ -2,11 +2,18 @@
 # Override path with: MCPP_CONFIG=/path/to/config.yaml
 
 upstreams:
+  # HTTP upstream (default transport)
   - name: gh
     url: https://api.github.com/mcp
     auth:
       keys:
         - ${GITHUB_TOKEN}
+
+  # Stdio upstream example (local MCP server)
+  # - name: filesystem
+  #   transport: stdio
+  #   command: npx
+  #   args: ["-y", "@anthropic/mcp-filesystem", "/tmp"]
 
 expose:
   gh/search:

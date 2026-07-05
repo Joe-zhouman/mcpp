@@ -14,7 +14,7 @@ import yaml
 from pydantic import ValidationError
 
 from mcpp.config import Config, ExposeEntry
-from mcpp.upstream import HttpTransport
+from mcpp.upstream import HttpTransport, StdioTransport
 from mcpp.keypool import KeyPool
 from mcpp.transform import transform_tools, param_transform_value
 
@@ -99,13 +99,26 @@ def _build_upstreams(app: FastAPI):
         else:
             logger.info("Upstream '%s': no auth", uc.name)
 
-        t = HttpTransport(
-            name=uc.name,
-            url=uc.url,
-            get_auth=_make_get_auth(app, uc.name) if kp else None,
-            connect_timeout=uc.connect_timeout,
-            read_timeout=uc.read_timeout,
-        )
+        if uc.transport == "stdio":
+            t = StdioTransport(
+                name=uc.name,
+                command=uc.command,
+                args=uc.args or [],
+                env=uc.env,
+                read_timeout=uc.read_timeout,
+            )
+            logger.info(
+                "Upstream '%s': stdio %s %s",
+                uc.name, uc.command, " ".join(uc.args or []),
+            )
+        else:
+            t = HttpTransport(
+                name=uc.name,
+                url=uc.url,
+                get_auth=_make_get_auth(app, uc.name) if kp else None,
+                connect_timeout=uc.connect_timeout,
+                read_timeout=uc.read_timeout,
+            )
         app.state.upstreams[uc.name] = t
 
 

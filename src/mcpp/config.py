@@ -16,7 +16,11 @@ class AuthConfig(BaseModel):
 
 class UpstreamConfig(BaseModel):
     name: str
-    url: str
+    transport: str = "http"           # "http" | "stdio"
+    url: Optional[str] = None         # http only
+    command: Optional[str] = None     # stdio only
+    args: Optional[list[str]] = None  # stdio only
+    env: Optional[dict[str, str]] = None  # stdio only, extra env vars
     auth: Optional[AuthConfig] = None
     connect_timeout: int = 30
     read_timeout: int = 120

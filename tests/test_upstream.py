@@ -1,5 +1,5 @@
 import pytest
-from mcpp.upstream import HttpTransport
+from mcpp.upstream import HttpTransport, StdioTransport
 
 
 @pytest.mark.asyncio
@@ -43,4 +43,57 @@ async def test_auth_header_per_request(httpx_mock):
     await t.list_tools()
     await t.list_tools()
     assert calls == ["key_a", "key_b"]  # fresh auth on each call
+    await t.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_list_tools():
+    """StdioTransport with a minimal Python MCP server over stdin/stdout."""
+    server_script = r"""
+import sys, json
+for line in sys.stdin:
+    req = json.loads(line)
+    if req["method"] == "tools/list":
+        resp = {
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {
+                "tools": [
+                    {"name": "search", "description": "Search files"},
+                ]
+            },
+        }
+        print(json.dumps(resp), flush=True)
+    elif req["method"] == "tools/call":
+        resp = {
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {"content": [{"type": "text", "text": "ok"}]},
+        }
+        print(json.dumps(resp), flush=True)
+"""
+    t = StdioTransport("test", "python3", ["-c", server_script])
+    tools = await t.list_tools()
+    assert len(tools) == 1
+    assert tools[0].name == "search"
+    await t.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_call_tool():
+    """StdioTransport call_tool round-trip."""
+    server_script = r"""
+import sys, json
+for line in sys.stdin:
+    req = json.loads(line)
+    resp = {
+        "jsonrpc": "2.0",
+        "id": req["id"],
+        "result": {"content": [{"type": "text", "text": "hello"}]},
+    }
+    print(json.dumps(resp), flush=True)
+"""
+    t = StdioTransport("test", "python3", ["-c", server_script])
+    result = await t.call_tool("any", {"q": "test"})
+    assert result == {"content": [{"type": "text", "text": "hello"}]}
     await t.close()
