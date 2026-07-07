@@ -4,6 +4,7 @@ from typing import Optional, Any
 
 from mcpp.config import Config, ExposeEntry, BACKTICK_REF
 from mcpp.upstream import Tool
+from mcpp.clients import get_format
 
 
 def _build_display_name_map(config: Config) -> dict[str, str]:
@@ -112,9 +113,23 @@ def transform_tools(
     upstream_name: str,
     tools: list[Tool],
     config: Config,
+    client: str = "default",
+    toolset: Optional[str] = None,
 ) -> list[Tool]:
-    """Transform upstream tool list to downstream tool surface."""
+    """Transform upstream tool list to downstream tool surface.
+
+    ``client`` selects a per-client name format (see mcpp.clients). The default
+    leaves tool names as the expose display name — byte-identical to the
+    pre-client-formatting behavior, so existing callers and tests are
+    unaffected.
+
+    ``toolset`` filters to tools belonging to one aggregated MCP server (an
+    expose entry's ``toolset`` field, falling back to ``config.server_name``).
+    When None, all tools are returned regardless of toolset. Only the tool
+    ``name`` is reformatted; the server prefix is the resolved toolset name.
+    """
     display_map = _build_display_name_map(config)
+    fmt = get_format(client)
     result: list[Tool] = []
 
     # Build reverse lookup: (upstream, tool) -> (key, entry)
@@ -131,13 +146,18 @@ def transform_tools(
         if entry.hide:
             continue
 
+        resolved_toolset = entry.toolset or config.server_name
+        if toolset is not None and resolved_toolset != toolset:
+            continue
+
         display_name = display_map.get(key, tool.name)
         description = entry.description or tool.description or ""
         description = _resolve_backticks(description, display_map)
         input_schema = _build_downstream_schema(entry, tool.inputSchema)
+        out_name = fmt.format_name(server=resolved_toolset, display_name=display_name)
 
         result.append(Tool(
-            name=display_name,
+            name=out_name,
             description=description,
             inputSchema=input_schema,
         ))

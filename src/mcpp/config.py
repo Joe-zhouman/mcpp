@@ -36,10 +36,21 @@ class ParamTransform(BaseModel):
     default: Any = None
 
 
+class GatewayAuth(BaseModel):
+    """Optional gateway-level bearer token.
+
+    Distinct from ``AuthConfig`` (which holds upstream API keys under
+    ``upstreams[].auth``). When ``token`` is set, all admin API and MCP
+    endpoints require it. When unset, the gateway is fully open.
+    """
+    token: Optional[str] = None
+
+
 class ExposeEntry(BaseModel):
     upstream: str        # upstream name
     tool: str            # upstream tool name
     as_: Optional[str] = Field(default=None, alias="as")  # display name (key is the stable ref)
+    toolset: Optional[str] = None  # aggregated MCP server this tool belongs to
     hide: bool = False
     description: Optional[str] = None
     params: Optional[list[ParamTransform]] = None
@@ -52,6 +63,9 @@ class ExposeEntry(BaseModel):
 class Config(BaseModel):
     upstreams: list[UpstreamConfig]
     expose: dict[str, ExposeEntry]  # key = "upstream/tool"
+    server_name: str = "mcpp"                       # aggregated MCP server name clients see
+    auth: Optional[GatewayAuth] = None            # gateway-level bearer token
+    clients: Optional[dict[str, bool]] = None     # per-client endpoint enable map
 
     @classmethod
     def from_yaml(cls, content: str) -> "Config":

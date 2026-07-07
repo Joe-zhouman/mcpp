@@ -1,6 +1,22 @@
 # mcpp config — copy to config.yaml and edit
 # Override path with: MCPP_CONFIG=/path/to/config.yaml
 
+# Name of the DEFAULT aggregated MCP server. Tools whose expose entry has no
+# `toolset` field land here. Reachable at /<server_name>/<client>/mcp.
+server_name: mcpp
+
+# Optional gateway-level bearer token. Set it to require auth on /admin, /api/*,
+# and all MCP endpoints (Authorization: Bearer <token>, ?token=, or mcpp_token
+# cookie). Leave unset for fully open access.
+# auth:
+#   token: ${MCPP_GATEWAY_TOKEN}
+
+# Per-client endpoint enable map. All three are on by default; set to false
+# to 404 that client's routes.
+# clients:
+#   claude: true
+#   cursor: false
+
 upstreams:
   # HTTP upstream (default transport)
   - name: gh
@@ -15,11 +31,15 @@ upstreams:
   #   command: npx
   #   args: ["-y", "@anthropic/mcp-filesystem", "/tmp"]
 
+# Each expose entry surfaces one upstream tool. `toolset` groups tools into an
+# aggregated MCP server the client connects to; `as` is the downstream tool name.
+# A Claude Code client hitting /search/claude/mcp sees mcp__search__<as>.
 expose:
   gh/search:
     upstream: gh
     tool: search
-    as: gh_search
+    toolset: search        # grouped under the "search" MCP server
+    as: github
     description: |
       Search GitHub repositories and code.
       For detailed code search, use `gh/code`.
@@ -31,5 +51,6 @@ expose:
   gh/code:
     upstream: gh
     tool: code_search
-    as: gh_code
+    toolset: search
+    as: github_code
     description: Search GitHub code with regex and path filters.

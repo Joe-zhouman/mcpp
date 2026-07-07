@@ -5,47 +5,133 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>mcpp &mdash; Admin</title>
 <style>
-  body { font-family: system-ui; max-width: 960px; margin: 0 auto; padding: 1rem; }
-  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-  th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; }
-  th { background: #f5f5f5; }
-  textarea { width: 100%; min-height: 400px; font-family: monospace; }
-  button { padding: .5rem 1rem; margin: .5rem .5rem 0 0; cursor: pointer; }
-  .tabs { margin-bottom: 1rem; }
-  .tab { display: inline-block; padding: .5rem 1rem; cursor: pointer; border: 1px solid #ddd; }
-  .tab.active { background: #f0f0f0; }
+  :root { --border:#ddd; --bg:#f5f5f5; --ok:#16a34a; --err:#dc2626; --accent:#2563eb; }
+  body { font-family: system-ui; max-width: 1100px; margin: 0 auto; padding: 1rem; color:#222; }
+  h1 { margin: 0 0 .5rem; }
+  h3 { margin: 1.2rem 0 .4rem; }
+  table { width: 100%; border-collapse: collapse; margin: .5rem 0; }
+  th, td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--bg); }
+  textarea { width: 100%; font-family: monospace; box-sizing: border-box; }
+  button { padding: .4rem .9rem; margin: .25rem .25rem 0 0; cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 4px; }
+  button:hover { background: var(--bg); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #1d4ed8; }
+  .tabs { margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 2px; }
+  .tab { display: inline-block; padding: .5rem 1rem; cursor: pointer; border: 1px solid var(--border); border-bottom: none; border-radius: 4px 4px 0 0; }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .panel { display: none; }
   .panel.active { display: block; }
-  #config-status { margin-top: .5rem; }
+  .status { margin-top: .5rem; font-family: monospace; }
+  .badge { display: inline-block; padding: .1rem .5rem; border-radius: 10px; font-size: .8rem; color: #fff; }
+  .badge.ok { background: var(--ok); } .badge.err { background: var(--err); }
+  code { background: var(--bg); padding: .1rem .3rem; border-radius: 3px; font-size: .9em; }
+  pre { background: var(--bg); padding: .5rem; overflow-x: auto; max-height: 200px; margin: .2rem 0; }
+  .muted { color: #777; font-size: .85rem; }
+  .endpoint { font-family: monospace; background: #eef; padding: .3rem .5rem; border-radius: 4px; display: inline-block; margin: .15rem 0; word-break: break-all; }
+  .tool-grid { columns: 2; column-gap: 1rem; }
+  .tool-item { break-inside: avoid; padding: .3rem 0; cursor: pointer; }
+  .tool-item:hover { color: var(--accent); text-decoration: underline; }
+  input[type=text], select { padding: .35rem; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; }
+  details { margin: .3rem 0; }
+  summary { cursor: pointer; padding: .2rem 0; }
 </style>
 </head>
 <body>
 <h1>mcpp Admin</h1>
+<div id="auth-bar" class="muted"></div>
 
 <div class="tabs">
-  <span class="tab active" data-tab="preview">Tool Preview</span>
-  <span class="tab" data-tab="config">Config Editor</span>
+  <span class="tab active" data-tab="toolsets">Toolsets</span>
+  <span class="tab" data-tab="preview">All Tools</span>
+  <span class="tab" data-tab="upstreams">Upstreams</span>
+  <span class="tab" data-tab="add">Add Server</span>
+  <span class="tab" data-tab="config">Config</span>
   <span class="tab" data-tab="keys">Keys</span>
 </div>
 
-<div id="preview" class="panel active">
-  <button onclick="loadPreview()">Refresh</button>
-  <table><thead><tr><th>Name</th><th>Description</th><th>Params</th></tr></thead><tbody></tbody></table>
+<div id="toolsets" class="panel active">
+  <p class="muted">Each toolset is one对外 MCP server. Point a client at the endpoint for its format (claude = <code>mcp__server__tool</code>, cursor = <code>mcp_server_tool</code>, default = bare name).</p>
+  <button class="primary" onclick="loadToolsets()">Refresh</button>
+  <div id="toolsets-content"></div>
+</div>
+
+<div id="preview" class="panel">
+  <button class="primary" onclick="loadPreview()">Refresh</button>
+  <table><thead><tr><th>Name</th><th>Description</th><th>Schema</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div id="upstreams" class="panel">
+  <button class="primary" onclick="loadUpstreams()">Refresh</button>
+  <div id="upstreams-content"></div>
+</div>
+
+<div id="add" class="panel">
+  <h3>Add MCP server(s) from Claude-Desktop-style JSON</h3>
+  <p class="muted">Paste one or more servers. <code>command</code> → stdio, <code>url</code> → http. <code>headers.Authorization: Bearer ...</code> is captured as the upstream key.</p>
+  <textarea id="add-json" rows="10" placeholder='{
+  "filesystem": {"command": "npx", "args": ["-y", "@anthropic/mcp-filesystem", "/tmp"]},
+  "gh": {"url": "https://api.github.com/mcp", "headers": {"Authorization": "Bearer ghp_xxx"}}
+}'></textarea>
+  <p>
+    <label>Toolset: <select id="add-toolset"></select></label>
+    <span class="muted">(group the new tools under this对外 server name; tools inherit the endpoint /&lt;toolset&gt;/&lt;client&gt;/mcp)</span>
+  </p>
+  <button class="primary" onclick="addServer()">Parse &amp; Add</button>
+  <div id="add-status" class="status"></div>
 </div>
 
 <div id="config" class="panel">
-  <textarea id="config-text"></textarea>
-  <button onclick="loadConfig()">Load</button>
-  <button onclick="saveConfig()">Save &amp; Reload</button>
-  <div id="config-status"></div>
+  <p class="muted">Cursor inside a <code>description:</code> line, then click a tool to insert a <code>\`key\`</code> reference.</p>
+  <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">
+    <button onclick="loadConfig()">Load</button>
+    <button class="primary" onclick="saveConfig()">Save &amp; Reload</button>
+    <span>Insert tool ref:</span>
+    <span id="tool-picker" class="tool-grid"></span>
+  </div>
+  <textarea id="config-text" rows="24" style="min-height:380px;"></textarea>
+  <div id="config-status" class="status"></div>
 </div>
 
 <div id="keys" class="panel">
-  <button onclick="loadKeys()">Refresh</button>
+  <button class="primary" onclick="loadKeys()">Refresh</button>
   <div id="keys-content"></div>
 </div>
 
 <script>
+// ---- token handling ----
+function getToken() {
+  let t = new URLSearchParams(location.search).get('token');
+  if (t) localStorage.setItem('mcpp_token', t);
+  return localStorage.getItem('mcpp_token') || '';
+}
+function setToken(v) { localStorage.setItem('mcpp_token', v || ''); }
+function authHeaders(extra) {
+  const h = Object.assign({'Content-Type': 'application/json'}, extra || {});
+  const t = getToken();
+  if (t) h['Authorization'] = 'Bearer ' + t;
+  return h;
+}
+async function api(url, opts) {
+  opts = opts || {};
+  const base = opts.body ? {'Content-Type': 'application/json'} : {};
+  opts.headers = Object.assign(base, opts.headers || {}, authHeaders());
+  let res = await fetch(url, opts);
+  if (res.status === 401) {
+    const t = prompt('Gateway token required:');
+    if (t !== null) { setToken(t); return api(url, opts); }
+  }
+  return res;
+}
+(function authBar() {
+  const bar = document.getElementById('auth-bar');
+  const t = getToken();
+  bar.textContent = t
+    ? 'Auth: bearer token set (' + t.slice(0,4) + '...) — ' + location.origin
+    : 'Auth: open (no token) — ' + location.origin;
+})();
+
+// ---- tabs ----
 document.querySelectorAll('.tab').forEach(t => {
   t.onclick = () => {
     document.querySelectorAll('.tab, .panel').forEach(e => e.classList.toggle('active', false));
@@ -54,71 +140,164 @@ document.querySelectorAll('.tab').forEach(t => {
   };
 });
 
-async function loadPreview() {
-  const res = await fetch('/api/tools');
-  const tools = await res.json();
-  document.querySelector('tbody').innerHTML = tools.map(t =>
-    `<tr><td><code>${t.name}</code></td><td>${t.description || ''}</td><td><pre>${JSON.stringify(t.inputSchema, null, 2)}</pre></td></tr>`
-  ).join('');
+// ---- toolsets ----
+async function loadToolsets() {
+  const res = await api('/api/toolsets');
+  const data = await res.json();
+  const el = document.getElementById('toolsets-content');
+  if (!data.length) { el.innerHTML = '<p class="muted">No toolsets.</p>'; return; }
+  let html = '';
+  for (const ts of data) {
+    const tag = ts.default ? ' <span class="badge ok">default</span>' : '';
+    html += `<h3>${ts.toolset} ${tag} <small>(${ts.tools.length} tools)</small></h3>`;
+    html += `<div>Endpoints:
+      <div class="endpoint">/${ts.toolset}/claude/mcp</div>
+      <div class="endpoint">/${ts.toolset}/cursor/mcp</div>
+      <div class="endpoint">/${ts.toolset}/mcp</div>
+    </div>`;
+    html += '<details><summary>tools</summary><div>';
+    for (const k of ts.tools) html += `<code>${k}</code> `;
+    html += '</div></details>';
+  }
+  el.innerHTML = html;
+  // also populate the add-server toolset dropdown
+  const sel = document.getElementById('add-toolset');
+  sel.innerHTML = data.map(t => `<option value="${t.toolset}">${t.toolset}${t.default?' (default)':''}</option>`).join('')
+    + '<option value="">(default)</option>';
 }
 
+// ---- preview (all tools, default format) ----
+async function loadPreview() {
+  const res = await api('/api/tools');
+  const tools = await res.json();
+  document.querySelector('#preview tbody').innerHTML = tools.map(t =>
+    `<tr><td><code>${t.name}</code></td><td>${(t.description||'').replace(/</g,'&lt;')}</td><td><pre>${JSON.stringify(t.inputSchema, null, 2)}</pre></td></tr>`
+  ).join('') || '<tr><td colspan=3 class="muted">No tools.</td></tr>';
+}
+
+// ---- upstreams: test + raw tools ----
+async function loadUpstreams() {
+  const res = await api('/api/upstreams');
+  const names = await res.json();
+  const el = document.getElementById('upstreams-content');
+  if (!names.length) { el.innerHTML = '<p class="muted">No upstreams configured.</p>'; return; }
+  el.innerHTML = names.map(n => `
+    <div style="border:1px solid var(--border); padding:.6rem; margin:.4rem 0; border-radius:6px;">
+      <h3 style="margin:0; display:inline;">${n}</h3>
+      <button onclick="testUpstream('${n}')">Test</button>
+      <button onclick="rawTools('${n}')">Raw Tools</button>
+      <div id="up-${n}" class="status"></div>
+    </div>`).join('');
+}
+async function testUpstream(name) {
+  const box = document.getElementById('up-' + name);
+  box.innerHTML = '<span class="muted">testing…</span>';
+  const res = await api('/api/upstreams/' + encodeURIComponent(name) + '/test', {method:'POST', body:'{}'});
+  const d = await res.json();
+  if (d.error && !d.ok) {
+    box.innerHTML = `<span class="badge err">FAIL</span> ${d.latency_ms}ms — <code>${d.error}</code>`;
+    return;
+  }
+  const badge = d.ok ? '<span class="badge ok">OK</span>' : '<span class="badge err">FAIL</span>';
+  const list = d.tools.map(t => `<code>${t.name}</code>`).join(' ');
+  box.innerHTML = `${badge} ${d.latency_ms}ms · ${d.tool_count} tools <details><summary>raw names</summary>${list || '<span class=muted>none</span>'}</details>`;
+}
+async function rawTools(name) {
+  const box = document.getElementById('up-' + name);
+  const res = await api('/api/upstreams/' + encodeURIComponent(name) + '/tools');
+  const d = await res.json();
+  if (d.error) { box.innerHTML = `<span class="badge err">ERR</span> ${d.error}`; return; }
+  box.innerHTML = d.tools.map(t =>
+    `<details><summary><code>${t.name}</code> — ${(t.description||'').slice(0,80)}</summary><pre>${JSON.stringify(t.inputSchema, null, 2)}</pre></details>`
+  ).join('') || '<span class="muted">no tools</span>';
+}
+
+// ---- add server ----
+async function addServer() {
+  const json_text = document.getElementById('add-json').value;
+  const toolset = document.getElementById('add-toolset').value || null;
+  const stat = document.getElementById('add-status');
+  stat.textContent = 'adding…';
+  const res = await api('/api/add-server', {method:'POST', body: JSON.stringify({json_text, toolset})});
+  const d = await res.json();
+  if (!res.ok) { stat.innerHTML = '<span style="color:var(--err)">Error: ' + (d.error || JSON.stringify(d)) + '</span>'; return; }
+  const ok = (d.added||[]).map(a => `${a.server} (${a.tools.length} tools → toolset ${a.toolset||'default'})`).join(', ');
+  const errs = (d.errors||[]).map(e => `${e.server}: ${e.error}`).join('; ');
+  stat.innerHTML = `<span style="color:var(--ok)">Added: ${ok || 'none'}</span>${errs ? '<br><span style="color:var(--err)">Errors: ' + errs + '</span>' : ''}`;
+  loadToolsets();
+}
+
+// ---- config editor + tool-insertion picker ----
 async function loadConfig() {
-  const res = await fetch('/api/config');
+  const res = await api('/api/config');
   const data = await res.json();
   document.getElementById('config-text').value = data.yaml;
+  loadToolPicker();
 }
-
+async function loadToolPicker() {
+  // Fan out per-upstream raw tools to build a key list for backtick insertion.
+  const r = await api('/api/upstreams');
+  const names = await r.json();
+  const picks = [];
+  for (const n of names) {
+    const rr = await api('/api/upstreams/' + encodeURIComponent(n) + '/tools');
+    const dd = await rr.json();
+    if (dd.tools) for (const t of dd.tools) picks.push(`${n}/${t.name}`);
+  }
+  document.getElementById('tool-picker').innerHTML = picks.map(k =>
+    `<span class="tool-item" onclick="insertKey('${k}')">${k}</span>`).join(' ');
+}
+function insertKey(key) {
+  const ta = document.getElementById('config-text');
+  const ref = '`' + key + '`';
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + ref + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + ref.length;
+  ta.focus();
+}
 async function saveConfig() {
   const text = document.getElementById('config-text').value;
-  const res = await fetch('/api/config', { method: 'POST', body: text });
+  const res = await api('/api/config', {method:'POST', body: text, headers:{'Content-Type':'text/plain'}});
   const stat = document.getElementById('config-status');
   if (res.ok) {
     stat.textContent = 'Saved & reloaded ✓';
-    stat.style.color = 'green';
-    loadPreview();
+    stat.style.color = 'var(--ok)';
+    loadPreview(); loadToolsets();
   } else {
     stat.textContent = 'Error: ' + (await res.text());
-    stat.style.color = 'red';
+    stat.style.color = 'var(--err)';
   }
 }
 
+// ---- keys ----
 async function loadKeys() {
-  const res = await fetch('/api/keys');
+  const res = await api('/api/keys');
   const data = await res.json();
-  const upstreams = Object.entries(data);
-  if (upstreams.length === 0) {
-    document.getElementById('keys-content').innerHTML = '<p>No key pools configured.</p>';
-    return;
-  }
+  const entries = Object.entries(data);
+  const el = document.getElementById('keys-content');
+  if (!entries.length) { el.innerHTML = '<p class="muted">No key pools configured.</p>'; return; }
   let html = '';
-  for (const [name, pool] of upstreams) {
+  for (const [name, pool] of entries) {
     html += `<h3>${name} <small>(${pool.healthy_count} healthy)</small></h3>`;
     html += '<table><thead><tr><th>Index</th><th>Key</th><th>Status</th><th>Action</th></tr></thead><tbody>';
     for (const k of pool.keys) {
-      const status = k.paused ? '<span style="color:red">Paused</span>' : '<span style="color:green">Active</span>';
-      const action = k.paused
-        ? `<button onclick="resumeKey('${name}', ${k.index})">Resume</button>`
-        : '—';
+      const status = k.paused ? '<span style="color:var(--err)">Paused</span>' : '<span style="color:var(--ok)">Active</span>';
+      const action = k.paused ? `<button onclick="resumeKey('${name}', ${k.index})">Resume</button>` : '—';
       html += `<tr><td>${k.index}</td><td><code>${k.key}</code></td><td>${status}</td><td>${action}</td></tr>`;
     }
     html += '</tbody></table>';
   }
-  document.getElementById('keys-content').innerHTML = html;
+  el.innerHTML = html;
 }
-
 async function resumeKey(upstream, index) {
-  const res = await fetch(`/api/keys/${upstream}/resume`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({key_index: index}),
+  const res = await api('/api/keys/' + encodeURIComponent(upstream) + '/resume', {
+    method:'POST', body: JSON.stringify({key_index: index})
   });
-  if (res.ok) {
-    loadKeys();
-  } else {
-    alert('Failed to resume key: ' + (await res.text()));
-  }
+  if (res.ok) loadKeys(); else alert('Failed: ' + (await res.text()));
 }
 
+// initial load
+loadToolsets();
 loadPreview();
 </script>
 </body>
