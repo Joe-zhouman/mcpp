@@ -30,12 +30,47 @@ class UpstreamTransport(Protocol):
 GetAuth = Callable[[], Optional[str]]
 
 
+def _parse_sse_json(text: str) -> Optional[dict]:
+    """Extract the first JSON-RPC object from an SSE stream body.
+
+    Handles both single-line and multi-line ``data:`` payloads (the JSON is
+    the concatenation of consecutive data lines per event). Returns the first
+    parsed object that looks like JSON-RPC, or None.
+    """
+    data_lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+        elif line.strip() == "" and data_lines:
+            # event boundary — try to parse accumulated data
+            blob = "\n".join(data_lines)
+            try:
+                obj = json.loads(blob)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+            data_lines = []
+    # flush trailing event (no final blank line)
+    if data_lines:
+        try:
+            obj = json.loads("\n".join(data_lines))
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 class HttpTransport:
     """HTTP upstream — Streamable HTTP MCP endpoints.
 
-    SSE fallback deferred to v2: returns a clear error for non-Streamable endpoints.
-    Per-request auth via `get_auth` callback — callers provide a fresh header on every
-    _rpc, so key pool rotation takes effect immediately.
+    Handles both single-response (``application/json``) and SSE-streamed
+    (``text/event-stream``) JSON-RPC replies. Endpoint path is auto-resolved:
+    if the configured url already contains an ``/mcp`` segment it is used
+    verbatim (supports token-in-path URLs), otherwise ``/mcp`` is appended.
+    Per-request auth via ``get_auth`` — a fresh header on every _rpc, so key
+    pool rotation takes effect immediately.
     """
 
     def __init__(
@@ -54,42 +89,133 @@ class HttpTransport:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect_timeout, read=read_timeout),
         )
+        self._session_id: Optional[str] = None
+        self._request_id = 0
 
-    def _headers(self) -> dict[str, str]:
-        h: dict[str, str] = {"Content-Type": "application/json"}
+    def _headers(self, with_session: bool = True) -> dict[str, str]:
+        # MCP Streamable HTTP: client must accept both the single JSON-RPC
+        # response and the SSE stream forms. Some servers 406 without this.
+        h: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if with_session and self._session_id:
+            h["MCP-Session-Id"] = self._session_id
         if self._get_auth:
             header = self._get_auth()
             if header:
                 h["Authorization"] = header
         return h
 
-    async def _rpc(self, method: str, params: Optional[dict] = None) -> dict:
+    def _endpoint(self) -> str:
+        """Resolve the MCP endpoint URL.
+
+        If the configured url path already contains an ``/mcp`` segment
+        (e.g. ``host/mcp`` Streamable-HTTP, or ``host/mcp/<token>`` with an
+        embedded token), use it verbatim. Otherwise append ``/mcp``.
+        """
+        path = self.url.rstrip("/")
+        if "/mcp" in path:
+            return path
+        return f"{path}/mcp"
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    async def _ensure_session(self) -> None:
+        """Run the MCP initialize handshake once, caching the session id.
+
+        Streamable-HTTP servers require: initialize → (capture session id) →
+        notifications/initialized → then real requests carry MCP-Session-Id.
+        """
+        if self._session_id is not None:
+            return
         payload = {
             "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params or {},
+            "id": self._next_id(),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "mcpp", "version": "0.1.0"},
+            },
         }
         resp = await self._client.post(
-            f"{self.url}/mcp",
-            json=payload,
-            headers=self._headers(),
+            self._endpoint(), json=payload, headers=self._headers(with_session=False)
         )
-        if resp.status_code == 200 and resp.headers.get("content-type", "").startswith(
-            "application/json"
-        ):
+        if resp.status_code != 200:
+            raise httpx.HTTPStatusError(
+                message=f"Upstream '{self.name}' initialize returned {resp.status_code}",
+                request=resp.request, response=resp,
+            )
+        sid = resp.headers.get("mcp-session-id")
+        if not sid:
+            # Server doesn't use sessions — proceed stateless.
+            return
+        self._session_id = sid
+        # Send the initialized notification to complete the handshake.
+        notif = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        await self._client.post(
+            self._endpoint(), json=notif, headers=self._headers()
+        )
+
+    async def _rpc(self, method: str, params: Optional[dict] = None) -> dict:
+        # Lazy session handshake; reset on 404/invalid-session and retry once.
+        for attempt in range(2):
+            await self._ensure_session()
+            payload = {
+                "jsonrpc": "2.0",
+                "id": self._next_id(),
+                "method": method,
+                "params": params or {},
+            }
+            resp = await self._client.post(
+                self._endpoint(), json=payload, headers=self._headers()
+            )
+            # Session expired / not found — drop it and retry once.
+            if resp.status_code in (404,) and attempt == 0 and self._session_id:
+                self._session_id = None
+                continue
+            break
+        if resp.status_code != 200:
+            raise httpx.HTTPStatusError(
+                message=f"Upstream '{self.name}' returned {resp.status_code}",
+                request=resp.request,
+                response=resp,
+            )
+        ctype = resp.headers.get("content-type", "")
+        if ctype.startswith("application/json"):
             data = resp.json()
-            if "error" in data:
+        elif ctype.startswith("text/event-stream"):
+            # MCP Streamable HTTP: JSON-RPC payload arrives as an SSE event.
+            data = _parse_sse_json(resp.text)
+            if data is None:
                 raise RuntimeError(
-                    f"Upstream '{self.name}' JSON-RPC error: "
-                    f"{data['error'].get('message', 'unknown')}"
+                    f"Upstream '{self.name}': SSE stream had no JSON-RPC response"
                 )
-            return data
-        raise httpx.HTTPStatusError(
-            message=f"Upstream '{self.name}' returned {resp.status_code}",
-            request=resp.request,
-            response=resp,
-        )
+        else:
+            # Try JSON anyway; some servers omit a proper content-type.
+            try:
+                data = resp.json()
+            except Exception:
+                raise httpx.HTTPStatusError(
+                    message=(
+                        f"Upstream '{self.name}': unsupported content-type {ctype!r}"
+                    ),
+                    request=resp.request,
+                    response=resp,
+                )
+        if "error" in data:
+            raise RuntimeError(
+                f"Upstream '{self.name}' JSON-RPC error: "
+                f"{data['error'].get('message', 'unknown')}"
+            )
+        return data
 
     async def list_tools(self) -> list[Tool]:
         result = await self._rpc("tools/list")

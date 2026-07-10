@@ -2,13 +2,26 @@ import pytest
 from mcpp.upstream import HttpTransport, StdioTransport
 
 
+def _mock_handshake(httpx_mock, url, session_id="sess-1"):
+    """Mock the initialize + initialized-notification responses for a session."""
+    httpx_mock.add_response(
+        url=url,
+        json={"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-11-25"}},
+        headers={"mcp-session-id": session_id},
+    )
+    # initialized notification gets an empty 202 response
+    httpx_mock.add_response(url=url, status_code=202, text="")
+
+
 @pytest.mark.asyncio
 async def test_list_tools(httpx_mock):
+    url = "https://api.example.com/mcp"
+    _mock_handshake(httpx_mock, url)
     httpx_mock.add_response(
-        url="https://api.example.com/mcp",
+        url=url,
         json={
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": 2,
             "result": {
                 "tools": [
                     {"name": "search", "description": "Search repos"},
@@ -26,23 +39,29 @@ async def test_list_tools(httpx_mock):
 
 @pytest.mark.asyncio
 async def test_auth_header_per_request(httpx_mock):
-    calls: list[str] = []
+    """Every outbound HTTP request carries a freshly-fetched bearer token,
+    so key-pool rotation takes effect immediately (not once per session)."""
+    url = "https://api.example.com/mcp"
+    seen: list[str] = []
+
     def get_auth() -> str:
-        key = "key_a" if len(calls) == 0 else "key_b"
-        calls.append(key)
+        key = f"key_{len(seen)}"
+        seen.append(key)
         return f"Bearer {key}"
 
-    httpx_mock.add_response(url="https://api.example.com/mcp", json={
-        "jsonrpc": "2.0", "id": 1, "result": {"tools": []}
-    })
-    httpx_mock.add_response(url="https://api.example.com/mcp", json={
-        "jsonrpc": "2.0", "id": 1, "result": {"tools": []}
-    })
+    # initialize + notif + first tools/list + second tools/list
+    for _ in range(4):
+        httpx_mock.add_response(
+            url=url, json={"jsonrpc": "2.0", "id": 1, "result": {}},
+            headers={"mcp-session-id": "sess-1"},
+        )
 
     t = HttpTransport("test", "https://api.example.com", get_auth=get_auth)
     await t.list_tools()
     await t.list_tools()
-    assert calls == ["key_a", "key_b"]  # fresh auth on each call
+    # A fresh key was fetched for each of the 4 requests (init, notif, list, list).
+    assert len(seen) == 4
+    assert len(set(seen)) == 4  # all distinct → rotation worked
     await t.close()
 
 

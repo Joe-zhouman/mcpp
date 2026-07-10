@@ -68,14 +68,21 @@
 
 <div id="add" class="panel">
   <h3>Add MCP server(s) from Claude-Desktop-style JSON</h3>
-  <p class="muted">Paste one or more servers. <code>command</code> → stdio, <code>url</code> → http. <code>headers.Authorization: Bearer ...</code> is captured as the upstream key.</p>
+  <p class="muted">Paste a Claude-Desktop / Cursor config (with or without the <code>mcpServers</code> wrapper) or a bare server map. <code>command</code> → stdio, <code>url</code> → http. <code>headers.Authorization: Bearer ...</code> is captured as the upstream key.</p>
   <textarea id="add-json" rows="10" placeholder='{
-  "filesystem": {"command": "npx", "args": ["-y", "@anthropic/mcp-filesystem", "/tmp"]},
-  "gh": {"url": "https://api.github.com/mcp", "headers": {"Authorization": "Bearer ghp_xxx"}}
+  "mcpServers": {
+    "search": {"url": "https://example.com/mcp/abc123"},
+    "filesystem": {"command": "npx", "args": ["-y", "@anthropic/mcp-filesystem", "/tmp"]}
+  }
+}
+--- 或直接贴内层 ---
+{
+  "search": {"url": "https://example.com/mcp/abc123"}
 }'></textarea>
   <p>
-    <label>Toolset: <select id="add-toolset"></select></label>
-    <span class="muted">(group the new tools under this对外 server name; tools inherit the endpoint /&lt;toolset&gt;/&lt;client&gt;/mcp)</span>
+    <label>Toolset: <input type="text" id="add-toolset" list="toolset-options" placeholder="(default: mcpp)  留空=默认，或填一个新的分组名，如 search" autocomplete="off"></label>
+    <datalist id="toolset-options"></datalist>
+    <span class="muted">把新工具归到这个对外 server 名下;留空进默认 mcpp,填新名=新建一个 toolset。endpoint 形如 /&lt;toolset&gt;/&lt;client&gt;/mcp</span>
   </p>
   <button class="primary" onclick="addServer()">Parse &amp; Add</button>
   <div id="add-status" class="status"></div>
@@ -160,10 +167,10 @@ async function loadToolsets() {
     html += '</div></details>';
   }
   el.innerHTML = html;
-  // also populate the add-server toolset dropdown
-  const sel = document.getElementById('add-toolset');
-  sel.innerHTML = data.map(t => `<option value="${t.toolset}">${t.toolset}${t.default?' (default)':''}</option>`).join('')
-    + '<option value="">(default)</option>';
+  // Populate the add-server toolset datalist (suggestions only — field is still
+  // freely typeable for new toolset names).
+  const dl = document.getElementById('toolset-options');
+  dl.innerHTML = data.map(t => `<option value="${t.toolset}">`).join('');
 }
 
 // ---- preview (all tools, default format) ----

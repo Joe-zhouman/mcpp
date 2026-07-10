@@ -515,6 +515,11 @@ async def add_server(request: Request):
     if not isinstance(raw, dict):
         return JSONResponse({"error": "Top-level JSON must be an object"}, status_code=400)
 
+    # Tolerate the full Claude-Desktop file shape: {"mcpServers": {...}}.
+    # Unwrap it so users can paste either the bare server map or the whole file.
+    if "mcpServers" in raw and isinstance(raw["mcpServers"], dict):
+        raw = raw["mcpServers"]
+
     config: Config = request.app.state.config
     added: list[dict] = []
     errors: list[dict] = []
