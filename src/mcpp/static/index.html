@@ -31,9 +31,6 @@
   pre { background: var(--bg); padding: .5rem; overflow-x: auto; max-height: 200px; margin: .2rem 0; }
   .muted { color: #777; font-size: .85rem; }
   .endpoint { font-family: monospace; background: #eef; padding: .3rem .5rem; border-radius: 4px; display: inline-block; margin: .15rem 0; word-break: break-all; }
-  .tool-grid { columns: 2; column-gap: 1rem; }
-  .tool-item { break-inside: avoid; padding: .3rem 0; cursor: pointer; }
-  .tool-item:hover { color: var(--accent); text-decoration: underline; }
   input[type=text], input[type=number], select { padding: .35rem; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: .92rem; }
   details { margin: .3rem 0; }
   summary { cursor: pointer; padding: .2rem 0; }
@@ -124,7 +121,7 @@
     <button onclick="loadConfig()">Load</button>
     <button class="primary" onclick="saveConfig()">Save &amp; Reload</button>
     <span>Insert tool ref:</span>
-    <span id="tool-picker" class="tool-grid"></span>
+    <select id="tool-picker" onchange="if(this.value){insertKey(this.value);this.value='';}"></select>
   </div>
   <textarea id="config-text" rows="24" style="min-height:380px;"></textarea>
   <div id="config-status" class="status"></div>
@@ -238,8 +235,10 @@ function renderCard(t) {
   html += `<textarea rows="3" data-k="${esc(t.key)}" data-f="description" placeholder="${esc(t.raw_description || '')}">${esc(t.description || '')}</textarea>`;
   html += `<div class="muted">上游原始描述: ${esc(t.raw_description || '(无)')}</div>`;
   html += `<div class="row" style="margin-top:.2rem;"><span class="muted">插入工具引用:</span>` +
-    TOOLS.map(o => `<span class="tool-item" onclick="insertRef('${esc(t.key)}','${esc(o.key)}')">${esc(o.key)}</span>`).join(' ') +
-    `</div></div></div>`;
+    `<select onchange="if(this.value){insertRef('${esc(t.key)}',this.value);this.value='';}">` +
+    `<option value="">选择工具…</option>` +
+    TOOLS.map(o => `<option value="${esc(o.key)}">${esc(o.key)}</option>`).join('') +
+    `</select></div></div></div>`;
 
   // params
   html += `<div style="margin-top:.6rem;"><b>参数</b> <span class="muted">(改名 / 隐藏 / 默认值 / enum / preset)</span></div>`;
@@ -589,8 +588,9 @@ async function loadConfig() {
 async function loadToolPicker() {
   const res = await api('/api/expose');
   const data = await res.json();
-  document.getElementById('tool-picker').innerHTML = (data || []).map(t =>
-    `<span class="tool-item" onclick="insertKey('${t.key}')">${t.key}</span>`).join(' ');
+  const sel = document.getElementById('tool-picker');
+  sel.innerHTML = `<option value="">选择工具…</option>` +
+    (data || []).map(t => `<option value="${t.key}">${t.key}</option>`).join('');
 }
 function insertKey(key) {
   const ta = document.getElementById('config-text');
