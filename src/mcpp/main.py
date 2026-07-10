@@ -8,7 +8,7 @@ import time
 from os import environ
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
@@ -16,7 +16,7 @@ import httpx
 import yaml
 from pydantic import ValidationError
 
-from mcpp.config import Config, ExposeEntry, AuthConfig, UpstreamConfig
+from mcpp.config import Config, ExposeEntry, AuthConfig, UpstreamConfig, ParamTransform
 from mcpp.upstream import HttpTransport, StdioTransport, Tool
 from mcpp.keypool import KeyPool
 from mcpp.transform import transform_tools, param_transform_value
@@ -157,6 +157,112 @@ def _build_upstreams(app: FastAPI):
                 read_timeout=uc.read_timeout,
             )
         app.state.upstreams[uc.name] = t
+
+
+async def _persist_and_reload(app, config: Config) -> None:
+    """Serialize ``config`` to disk, swap it into app.state, and rebuild upstreams.
+
+    Shared by the YAML, single-entry, and add-server writers. Serializes the
+    in-memory object (not caller text) then re-parses for the live state, so
+    what runs is exactly what is on disk.
+    """
+    new_yaml = config.to_yaml()
+    CONFIG_PATH.write_text(new_yaml)
+    logger.info("Config written to %s, reloading", CONFIG_PATH)
+    old_upstreams = app.state.upstreams
+    app.state.config = Config.from_yaml(new_yaml)
+    _build_upstreams(app)
+    for t in old_upstreams.values():
+        await t.close()
+
+
+async def _fetch_all_raw_tools(app) -> dict[tuple[str, str], dict]:
+    """Fetch raw (untransformed) tools from every upstream, concurrently.
+
+    Returns a lookup ``(upstream_name, tool_name) -> {name, description, inputSchema}``
+    for merging the upstream schema into expose entries in the admin editor.
+    Upstream failures are logged and skipped.
+    """
+    async def _one(uc: UpstreamConfig):
+        transport = app.state.upstreams.get(uc.name)
+        if transport is None:
+            return {}
+        try:
+            tools = await asyncio.wait_for(transport.list_tools(), timeout=30)
+        except Exception as e:
+            logger.warning("raw fetch upstream '%s' failed: %s", uc.name, e)
+            return {}
+        out = {}
+        for t in tools:
+            out[(uc.name, t.name)] = {
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": t.inputSchema,
+            }
+        return out
+
+    results = await asyncio.gather(*[_one(uc) for uc in app.state.config.upstreams])
+    merged: dict[tuple[str, str], dict] = {}
+    for r in results:
+        merged.update(r)
+    return merged
+
+
+def _merge_params(entry: ExposeEntry, upstream_schema: Optional[dict]) -> list[dict]:
+    """Merge an ExposeEntry's param transforms with the upstream tool's schema.
+
+    Emits one row per upstream parameter (plus any entry.params that no longer
+    matches an upstream param — kept so edits aren't lost). Each row carries
+    the editable transform fields plus read-only upstream context.
+    """
+    upstream_schema = upstream_schema or {}
+    props: dict[str, Any] = upstream_schema.get("properties", {}) or {}
+    required: list[str] = upstream_schema.get("required", []) or []
+
+    # Index the entry's transforms by their effective upstream param name.
+    by_upstream: dict[str, "ParamTransform"] = {}
+    for p in entry.params or []:
+        by_upstream[p.map_from or p.name] = p
+
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for up_name, up_prop in props.items():
+        seen.add(up_name)
+        p = by_upstream.get(up_name)
+        if p is None:
+            # upstream param not yet transformed — show defaults
+            rows.append({
+                "name": up_name, "map_from": None, "hidden": False,
+                "default": None, "type": None, "mapping": None, "preset": None,
+                "_upstream_name": up_name,
+                "_upstream_type": up_prop.get("type"),
+                "_upstream_description": up_prop.get("description", ""),
+                "_required": up_name in required,
+            })
+        else:
+            rows.append({
+                "name": p.name, "map_from": p.map_from, "hidden": p.hidden,
+                "default": p.default, "type": p.type, "mapping": p.mapping, "preset": p.preset,
+                "_upstream_name": up_name,
+                "_upstream_type": up_prop.get("type"),
+                "_upstream_description": up_prop.get("description", ""),
+                "_required": up_name in required,
+            })
+
+    # Preserve transforms whose upstream param no longer exists (orphaned),
+    # so the user can still see/edit them rather than silently dropping.
+    for up_name, p in by_upstream.items():
+        if up_name in seen:
+            continue
+        rows.append({
+            "name": p.name, "map_from": p.map_from, "hidden": p.hidden,
+            "default": p.default, "type": p.type, "mapping": p.mapping, "preset": p.preset,
+            "_upstream_name": up_name,
+            "_upstream_type": None,
+            "_upstream_description": "",
+            "_required": False,
+        })
+    return rows
 
 
 app = FastAPI(title="mcpp", lifespan=lifespan)
@@ -396,13 +502,7 @@ async def update_config(request: Request):
         new_config = Config.from_yaml(yaml_text.decode())
     except (UnicodeDecodeError, ValueError, ValidationError, yaml.YAMLError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    CONFIG_PATH.write_text(yaml_text.decode())
-    logger.info("Config written to %s, reloading", CONFIG_PATH)
-    old_upstreams = request.app.state.upstreams
-    request.app.state.config = new_config
-    _build_upstreams(request.app)
-    for t in old_upstreams.values():
-        await t.close()
+    await _persist_and_reload(request.app, new_config)
     return JSONResponse({"status": "reloaded"})
 
 
@@ -457,6 +557,89 @@ async def raw_upstream_tools(name: str, request: Request):
         })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/expose", dependencies=AUTH)
+async def list_expose(request: Request):
+    """Return all expose entries with the upstream schema merged in.
+
+    Each entry carries editable fields (as, toolset, hide, description, params)
+    plus read-only upstream context (raw_description, per-param _upstream_*).
+    The frontend renders one form card per entry from this payload.
+    """
+    config: Config = request.app.state.config
+    raw = await _fetch_all_raw_tools(request.app)
+    out = []
+    for key, entry in config.expose.items():
+        rt = raw.get((entry.upstream, entry.tool), {})
+        out.append({
+            "key": key,
+            "upstream": entry.upstream,
+            "tool": entry.tool,
+            "as": entry.as_,
+            "toolset": entry.toolset or config.server_name,
+            "hide": entry.hide,
+            "description": entry.description,
+            "raw_description": rt.get("description"),
+            "params": _merge_params(entry, rt.get("inputSchema")),
+        })
+    return JSONResponse(out)
+
+
+@app.put("/api/expose/{key:path}", dependencies=AUTH)
+async def put_expose(key: str, request: Request):
+    """Update a single expose entry from a structured JSON body.
+
+    The body is an ExposeEntry (with ``as`` alias). upstream/tool are identity
+    fields — they're forced back to the existing values, so clients can't
+    repoint an entry at a different upstream tool via this endpoint.
+    """
+    config: Config = request.app.state.config
+    # URL-decoded key must exist. (FastAPI decodes path params already.)
+    if key not in config.expose:
+        return JSONResponse({"error": f"Unknown expose key: {key}"}, status_code=404)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    # Strip client-only read-only fields the GET emits (prefixed _).
+    body = {k: v for k, v in body.items() if not k.startswith("_")}
+    # Force identity fields to existing values.
+    body["upstream"] = config.expose[key].upstream
+    body["tool"] = config.expose[key].tool
+    try:
+        entry = ExposeEntry.model_validate(body)
+        # Stage, validate refs against the staged config, then persist.
+        config.expose[key] = entry
+        config.validate_refs()
+    except (ValidationError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    await _persist_and_reload(request.app, config)
+    return JSONResponse({"status": "saved", "key": key})
+
+
+@app.delete("/api/expose/{key:path}", dependencies=AUTH)
+async def delete_expose(key: str, request: Request):
+    """Delete a single expose entry.
+
+    Refuses with 409 if other entries' descriptions backtick-reference this
+    tool — the user must remove those refs first (otherwise the reload would
+    fail validate_refs).
+    """
+    config: Config = request.app.state.config
+    if key not in config.expose:
+        return JSONResponse({"error": f"Unknown expose key: {key}"}, status_code=404)
+    referrers = [
+        other for other, e in config.expose.items()
+        if other != key and e.description and f"`{key}`" in e.description
+    ]
+    if referrers:
+        return JSONResponse({
+            "error": f"Cannot delete '{key}': referenced by {referrers}. "
+                     f"Remove those backtick refs first.",
+        }, status_code=409)
+    del config.expose[key]
+    await _persist_and_reload(request.app, config)
+    return JSONResponse({"status": "deleted", "key": key})
 
 
 @app.post("/api/upstreams/{name}/test", dependencies=AUTH)

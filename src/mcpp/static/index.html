@@ -5,18 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>mcpp &mdash; Admin</title>
 <style>
-  :root { --border:#ddd; --bg:#f5f5f5; --ok:#16a34a; --err:#dc2626; --accent:#2563eb; }
-  body { font-family: system-ui; max-width: 1100px; margin: 0 auto; padding: 1rem; color:#222; }
+  :root { --border:#ddd; --bg:#f5f5f5; --ok:#16a34a; --err:#dc2626; --accent:#2563eb; --warn:#d97706; }
+  body { font-family: system-ui; max-width: 1150px; margin: 0 auto; padding: 1rem; color:#222; }
   h1 { margin: 0 0 .5rem; }
   h3 { margin: 1.2rem 0 .4rem; }
   table { width: 100%; border-collapse: collapse; margin: .5rem 0; }
   th, td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { background: var(--bg); }
   textarea { width: 100%; font-family: monospace; box-sizing: border-box; }
-  button { padding: .4rem .9rem; margin: .25rem .25rem 0 0; cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 4px; }
+  button { padding: .4rem .9rem; margin: .25rem .25rem 0 0; cursor: pointer; border: 1px solid var(--border); background: #fff; border-radius: 4px; font-size: .92rem; }
   button:hover { background: var(--bg); }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.primary:hover { background: #1d4ed8; }
+  button.danger { color: var(--err); border-color: #f3c2c2; }
+  button.danger:hover { background: #fee; }
   .tabs { margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 2px; }
   .tab { display: inline-block; padding: .5rem 1rem; cursor: pointer; border: 1px solid var(--border); border-bottom: none; border-radius: 4px 4px 0 0; }
   .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -24,7 +26,7 @@
   .panel.active { display: block; }
   .status { margin-top: .5rem; font-family: monospace; }
   .badge { display: inline-block; padding: .1rem .5rem; border-radius: 10px; font-size: .8rem; color: #fff; }
-  .badge.ok { background: var(--ok); } .badge.err { background: var(--err); }
+  .badge.ok { background: var(--ok); } .badge.err { background: var(--err); } .badge.muted { background: #999; }
   code { background: var(--bg); padding: .1rem .3rem; border-radius: 3px; font-size: .9em; }
   pre { background: var(--bg); padding: .5rem; overflow-x: auto; max-height: 200px; margin: .2rem 0; }
   .muted { color: #777; font-size: .85rem; }
@@ -32,9 +34,27 @@
   .tool-grid { columns: 2; column-gap: 1rem; }
   .tool-item { break-inside: avoid; padding: .3rem 0; cursor: pointer; }
   .tool-item:hover { color: var(--accent); text-decoration: underline; }
-  input[type=text], select { padding: .35rem; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; }
+  input[type=text], input[type=number], select { padding: .35rem; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: .92rem; }
   details { margin: .3rem 0; }
   summary { cursor: pointer; padding: .2rem 0; }
+  /* tool editor cards */
+  .card { border: 1px solid var(--border); border-radius: 6px; margin: .5rem 0; background: #fff; }
+  .card > summary { padding: .7rem .9rem; font-weight: 600; cursor: pointer; list-style: none; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .card > summary::-webkit-details-marker { display: none; }
+  .card > summary::before { content: '▶'; font-size: .7rem; color: #999; transition: transform .15s; }
+  .card[open] > summary::before { transform: rotate(90deg); }
+  .card-body { padding: .5rem .9rem .9rem; border-top: 1px solid var(--border); }
+  .field { margin: .5rem 0; display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .field > label { min-width: 7rem; color: #555; font-size: .9rem; }
+  .row { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+  .param { border: 1px solid #eee; border-radius: 5px; padding: .5rem; margin: .3rem 0; background: #fafafa; }
+  .param-head { font-family: monospace; font-weight: 600; color: var(--accent); }
+  .kv-row { display: flex; gap: .3rem; align-items: center; margin: .2rem 0; }
+  .kv-row input { flex: 1; min-width: 6rem; }
+  .preview { font-family: monospace; background: #eef6ff; padding: .25rem .5rem; border-radius: 4px; color: var(--accent); }
+  .pill { font-size: .75rem; padding: .1rem .4rem; border-radius: 8px; background: #eee; color: #555; }
+  .dirty { border-left: 3px solid var(--warn); }
+  .inline-status { font-size: .82rem; margin-left: auto; }
 </style>
 </head>
 <body>
@@ -42,15 +62,25 @@
 <div id="auth-bar" class="muted"></div>
 
 <div class="tabs">
-  <span class="tab active" data-tab="toolsets">Toolsets</span>
-  <span class="tab" data-tab="preview">All Tools</span>
+  <span class="tab active" data-tab="tools">Tools</span>
+  <span class="tab" data-tab="toolsets">Toolsets</span>
+  <span class="tab" data-tab="preview">Preview</span>
   <span class="tab" data-tab="upstreams">Upstreams</span>
   <span class="tab" data-tab="add">Add Server</span>
-  <span class="tab" data-tab="config">Config</span>
+  <span class="tab" data-tab="config">YAML (advanced)</span>
   <span class="tab" data-tab="keys">Keys</span>
 </div>
 
-<div id="toolsets" class="panel active">
+<!-- ===== Tools editor (structured, per-tool form) ===== -->
+<div id="tools" class="panel active">
+  <div class="row" style="margin-bottom:.5rem;">
+    <button class="primary" onclick="loadTools()">Refresh</button>
+    <span class="muted">Edit each tool's name / grouping / description / params inline. Each tool saves independently.</span>
+  </div>
+  <div id="tools-content"></div>
+</div>
+
+<div id="toolsets" class="panel">
   <p class="muted">Each toolset is one对外 MCP server. Point a client at the endpoint for its format (claude = <code>mcp__server__tool</code>, cursor = <code>mcp_server_tool</code>, default = bare name).</p>
   <button class="primary" onclick="loadToolsets()">Refresh</button>
   <div id="toolsets-content"></div>
@@ -89,7 +119,7 @@
 </div>
 
 <div id="config" class="panel">
-  <p class="muted">Cursor inside a <code>description:</code> line, then click a tool to insert a <code>\`key\`</code> reference.</p>
+  <p class="muted">Raw YAML editor for power users. For per-tool editing use the <b>Tools</b> tab. Cursor inside a <code>description:</code> line, then click a tool to insert a <code>\`key\`</code> reference.</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">
     <button onclick="loadConfig()">Load</button>
     <button class="primary" onclick="saveConfig()">Save &amp; Reload</button>
@@ -106,15 +136,15 @@
 </div>
 
 <script>
-// ---- token handling ----
+// ============ token handling ============
 function getToken() {
   let t = new URLSearchParams(location.search).get('token');
   if (t) localStorage.setItem('mcpp_token', t);
   return localStorage.getItem('mcpp_token') || '';
 }
 function setToken(v) { localStorage.setItem('mcpp_token', v || ''); }
-function authHeaders(extra) {
-  const h = Object.assign({'Content-Type': 'application/json'}, extra || {});
+function authHeaders() {
+  const h = {};
   const t = getToken();
   if (t) h['Authorization'] = 'Bearer ' + t;
   return h;
@@ -138,16 +168,336 @@ async function api(url, opts) {
     : 'Auth: open (no token) — ' + location.origin;
 })();
 
-// ---- tabs ----
+// ============ tabs ============
 document.querySelectorAll('.tab').forEach(t => {
   t.onclick = () => {
     document.querySelectorAll('.tab, .panel').forEach(e => e.classList.toggle('active', false));
     t.classList.add('active');
     document.getElementById(t.dataset.tab).classList.add('active');
+    if (t.dataset.tab === 'tools') loadTools();
   };
 });
 
-// ---- toolsets ----
+// ============ Tools editor (structured) ============
+// TOOLS: array of entries from GET /api/expose, with in-place edits.
+let TOOLS = [];
+let DIRTY = {};   // key -> true when edited since last save/load
+
+async function loadTools() {
+  const res = await api('/api/expose');
+  if (!res.ok) { document.getElementById('tools-content').innerHTML = '<p style="color:var(--err)">Failed to load: ' + await res.text() + '</p>'; return; }
+  TOOLS = await res.json();
+  DIRTY = {};
+  renderTools();
+}
+function toolByKey(k) { return TOOLS.find(t => t.key === k); }
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function renderTools() {
+  const el = document.getElementById('tools-content');
+  if (!TOOLS.length) { el.innerHTML = '<p class="muted">No tools. Add an MCP server in the "Add Server" tab.</p>'; return; }
+  // group by toolset
+  const groups = {};
+  for (const t of TOOLS) (groups[t.toolset] = groups[t.toolset] || []).push(t);
+  let html = '';
+  for (const ts of Object.keys(groups).sort()) {
+    html += `<h3>toolset: ${esc(ts)} <span class="pill">${groups[ts].length} tools</span> <span class="endpoint">/${esc(ts)}/claude/mcp</span></h3>`;
+    for (const t of groups[ts]) html += renderCard(t);
+  }
+  el.innerHTML = html;
+  // wire live-preview on every card
+  for (const t of TOOLS) {
+    const card = document.getElementById('card-' + cssEscape(t.key));
+    if (card) wireCard(card, t.key);
+  }
+}
+
+function renderCard(t) {
+  const open = DIRTY[t.key] ? ' open' : '';
+  const dirtyCls = DIRTY[t.key] ? ' dirty' : '';
+  const previewName = `mcp__${t.toolset}__${t.as || t.tool}`;
+  let html = `<details class="card${dirtyCls}"${open} id="card-${cssEscape(t.key)}"><summary>` +
+    `<span class="param-head">${esc(t.as || t.tool)}</span>` +
+    ` <span class="muted">${esc(t.key)}</span>` +
+    (t.hide ? ' <span class="badge muted">hidden</span>' : '') +
+    ` <span class="preview">${esc(previewName)}</span>` +
+    ` <span class="inline-status" id="st-${cssEscape(t.key)}"></span>` +
+    `</summary><div class="card-body">`;
+
+  // header fields
+  html += `<div class="field"><label>对外名 (as)</label>` +
+    `<input type="text" value="${esc(t.as || '')}" data-k="${esc(t.key)}" data-f="as" placeholder="${esc(t.tool)}（留空用上游名）"></div>`;
+  html += `<div class="field"><label>toolset</label>` +
+    `<input type="text" value="${esc(t.toolset)}" data-k="${esc(t.key)}" data-f="toolset"></div>`;
+  html += `<div class="field"><label>hide</label>` +
+    `<input type="checkbox" ${t.hide ? 'checked' : ''} data-k="${esc(t.key)}" data-f="hide"></div>`;
+
+  // description
+  html += `<div class="field"><label>description</label><div style="flex:1;">`;
+  html += `<textarea rows="3" data-k="${esc(t.key)}" data-f="description" placeholder="${esc(t.raw_description || '')}">${esc(t.description || '')}</textarea>`;
+  html += `<div class="muted">上游原始描述: ${esc(t.raw_description || '(无)')}</div>`;
+  html += `<div class="row" style="margin-top:.2rem;"><span class="muted">插入工具引用:</span>` +
+    TOOLS.map(o => `<span class="tool-item" onclick="insertRef('${esc(t.key)}','${esc(o.key)}')">${esc(o.key)}</span>`).join(' ') +
+    `</div></div></div>`;
+
+  // params
+  html += `<div style="margin-top:.6rem;"><b>参数</b> <span class="muted">(改名 / 隐藏 / 默认值 / enum / preset)</span></div>`;
+  if (!t.params || !t.params.length) {
+    html += `<p class="muted">该工具无可编辑参数(上游无 schema 或全部透传)。</p>`;
+  } else {
+    for (let i = 0; i < t.params.length; i++) html += renderParam(t.key, t.params[i], i);
+  }
+
+  // actions
+  html += `<div class="row" style="margin-top:.7rem;">` +
+    `<button class="primary" onclick="saveTool('${esc(t.key)}')">Save</button>` +
+    `<button onclick="revertTool('${esc(t.key)}')">Revert</button>` +
+    `<button class="danger" onclick="deleteTool('${esc(t.key)}')">Delete tool</button>` +
+    `</div>`;
+  html += `</div></details>`;
+  return html;
+}
+
+function renderParam(toolKey, p, i) {
+  const req = p._required ? '<span class="badge err">required</span>' : '<span class="pill">optional</span>';
+  let html = `<div class="param"><div class="param-head">${esc(p._upstream_name)}</div>` +
+    `<div class="muted">上游: ${esc(p._upstream_type || '?')} · ${req} · ${esc(p._upstream_description || '')}</div>`;
+  html += `<div class="row" style="margin-top:.3rem;">
+    <label class="muted">对外名</label><input type="text" value="${esc(p.name)}" data-k="${esc(toolKey)}" data-pi="${i}" data-pf="name" style="min-width:10rem;">
+    <label class="muted">映射到(map_from)</label><input type="text" value="${esc(p.map_from || '')}" data-k="${esc(toolKey)}" data-pi="${i}" data-pf="map_from" placeholder="${esc(p._upstream_name)}" style="min-width:10rem;">
+    <label class="muted">隐藏</label><input type="checkbox" ${p.hidden ? 'checked' : ''} data-k="${esc(toolKey)}" data-pi="${i}" data-pf="hidden">
+    <label class="muted">默认值</label><input type="text" value="${esc(p.default == null ? '' : p.default)}" data-k="${esc(toolKey)}" data-pi="${i}" data-pf="default" placeholder="(none)">
+  </div>`;
+  // transform type
+  const curType = p.type || 'none';
+  html += `<div class="row" style="margin-top:.3rem;">
+    <label class="muted">转换</label>
+    <select data-k="${esc(toolKey)}" data-pi="${i}" data-pf="type" onchange="changeParamType('${esc(toolKey)}', ${i}, this.value)">
+      <option value="none" ${curType==='none'?'selected':''}>none (透传)</option>
+      <option value="enum" ${curType==='enum'?'selected':''}>enum (值映射)</option>
+      <option value="preset" ${curType==='preset'?'selected':''}>preset (预设组合)</option>
+    </select></div>`;
+  // enum / preset editors
+  if (curType === 'enum') html += renderEnumEditor(toolKey, p, i);
+  if (curType === 'preset') html += renderPresetEditor(toolKey, p, i);
+  html += `</div>`;
+  return html;
+}
+
+function renderEnumEditor(toolKey, p, i) {
+  const mapping = p.mapping || {};
+  let html = `<div style="margin:.3rem 0 .3rem 8rem;"><div class="muted">enum 映射(对外值 → 上游值):</div>`;
+  const keys = Object.keys(mapping);
+  if (!keys.length) html += `<div class="muted" id="enum-empty-${esc(toolKey)}-${i}">(空,点下面添加)</div>`;
+  for (const k of keys) {
+    html += `<div class="kv-row">
+      <input type="text" value="${esc(k)}" data-k="${esc(toolKey)}" data-pi="${i}" data-ef="key" data-old="${esc(k)}">
+      <span>→</span>
+      <input type="text" value="${esc(mapping[k])}" data-k="${esc(toolKey)}" data-pi="${i}" data-ef="val" data-old="${esc(k)}">
+      <button onclick="removeEnumRow('${esc(toolKey)}', ${i}, '${esc(k)}')">✕</button>
+    </div>`;
+  }
+  html += `<button onclick="addEnumRow('${esc(toolKey)}', ${i})">+ 添加映射</button></div>`;
+  return html;
+}
+
+function renderPresetEditor(toolKey, p, i) {
+  const preset = p.preset || {};
+  let html = `<div style="margin:.3rem 0 .3rem 8rem;"><div class="muted">preset 预设(预设名 → 多个上游参数):</div>`;
+  for (const pname of Object.keys(preset)) {
+    html += `<div style="border-left:2px solid var(--accent); padding-left:.5rem; margin:.3rem 0;">`;
+    html += `<div class="row"><input type="text" value="${esc(pname)}" data-k="${esc(toolKey)}" data-pi="${i}" data-pf="presetName" data-old="${esc(pname)}" style="font-weight:600;">
+      <button onclick="removePreset('${esc(toolKey)}', ${i}, '${esc(pname)}')">✕ 删预设</button></div>`;
+    const kv = preset[pname] || {};
+    for (const [pk, pv] of Object.entries(kv)) {
+      html += `<div class="kv-row">
+        <input type="text" value="${esc(pk)}" data-k="${esc(toolKey)}" data-pi="${i}" data-preset="${esc(pname)}" data-pf="presetKey" data-old="${esc(pk)}">
+        <span>=</span>
+        <input type="text" value="${esc(pv)}" data-k="${esc(toolKey)}" data-pi="${i}" data-preset="${esc(pname)}" data-pf="presetVal" data-old="${esc(pk)}">
+        <button onclick="removePresetKv('${esc(toolKey)}', ${i}, '${esc(pname)}', '${esc(pk)}')">✕</button>
+      </div>`;
+    }
+    html += `<button onclick="addPresetKv('${esc(toolKey)}', ${i}, '${esc(pname)}')">+ 参数</button></div>`;
+  }
+  html += `<button onclick="addPreset('${esc(toolKey)}', ${i})">+ 添加预设</button></div>`;
+  return html;
+}
+
+// ---- live edit wiring: read DOM into TOOLS on input ----
+function readFormToTool(key) {
+  const t = toolByKey(key);
+  if (!t) return;
+  // top-level fields
+  document.querySelectorAll(`[data-k="${cssSelector(key)}"][data-f]`).forEach(el => {
+    const f = el.dataset.f;
+    if (el.type === 'checkbox') t[f] = el.checked;
+    else if (f === 'as' || f === 'toolset' || f === 'description') t[f] = el.value || (f === 'as' ? null : '');
+  });
+  // params
+  if (t.params) {
+    document.querySelectorAll(`[data-k="${cssSelector(key)}"][data-pi]`).forEach(el => {
+      const i = +el.dataset.pi, pf = el.dataset.pf;
+      if (pf === 'name' || pf === 'map_from' || pf === 'default') {
+        let v = el.value;
+        if (pf === 'map_from' && !v) v = null;
+        if (pf === 'default' && v === '') v = null;
+        if (pf === 'default' && v !== null) { const n = Number(v); if (!isNaN(n) && v !== '') v = n; }
+        t.params[i][pf] = v;
+      } else if (pf === 'hidden') {
+        t.params[i].hidden = el.checked;
+      } else if (pf === 'type') {
+        t.params[i].type = (el.value === 'none') ? null : el.value;
+      }
+    });
+    // enum/preset live edits
+    readEnumEdits(key, t);
+    readPresetEdits(key, t);
+  }
+  DIRTY[key] = true;
+}
+
+function readEnumEdits(key, t) {
+  // Rebuild each enum param's mapping from its DOM rows. A row is identified by
+  // its original key (data-old); we pair the key input with the val input that
+  // shares the same data-old, then read current values.
+  t.params.forEach((p, i) => {
+    if (p.type !== 'enum') return;
+    const keyInputs = [...document.querySelectorAll(
+      `[data-k="${cssSelector(key)}"][data-pi="${i}"][data-ef="key"]`)];
+    const nm = {};
+    for (const ki of keyInputs) {
+      const old = ki.dataset.old;
+      const vi = document.querySelector(
+        `[data-k="${cssSelector(key)}"][data-pi="${i}"][data-ef="val"][data-old="${cssSelector(old)}"]`);
+      if (ki.value && vi) nm[ki.value] = vi.value;
+    }
+    p.mapping = nm;
+  });
+}
+
+function readPresetEdits(key, t) {
+  t.params.forEach((p, i) => {
+    if (p.type !== 'preset') return;
+    // rebuild preset name + each preset's kv from DOM
+    const nameInputs = [...document.querySelectorAll(`[data-k="${cssSelector(key)}"][data-pi="${i}"][data-pf="presetName"]`)];
+    const newPreset = {};
+    nameInputs.forEach(ni => {
+      const pname = ni.value;
+      if (!pname) return;
+      const keyInputs = [...document.querySelectorAll(`[data-k="${cssSelector(key)}"][data-pi="${i}"][data-preset="${cssSelector(ni.dataset.old)}"][data-pf="presetKey"]`)];
+      const kv = {};
+      keyInputs.forEach(ki => {
+        const oldKey = ki.dataset.old;
+        const vi = document.querySelector(`[data-k="${cssSelector(key)}"][data-pi="${i}"][data-preset="${cssSelector(ni.dataset.old)}"][data-pf="presetVal"][data-old="${cssSelector(oldKey)}"]`);
+        if (ki.value && vi) {
+          let v = vi.value; const n = Number(v); if (!isNaN(n) && v !== '') v = n;
+          kv[ki.value] = v;
+        }
+      });
+      newPreset[pname] = kv;
+    });
+    p.preset = newPreset;
+  });
+}
+
+// ---- mutations for enum/preset rows ----
+function addEnumRow(key, i) { readFormToTool(key); const p = toolByKey(key).params[i]; p.mapping = p.mapping || {}; p.mapping['new_' + Object.keys(p.mapping).length] = ''; DIRTY[key] = true; rerenderCard(key); }
+function removeEnumRow(key, i, k) { readFormToTool(key); const p = toolByKey(key).params[i]; delete (p.mapping||{})[k]; DIRTY[key] = true; rerenderCard(key); }
+function addPreset(key, i) { readFormToTool(key); const p = toolByKey(key).params[i]; p.preset = p.preset || {}; p.preset['new_preset_' + Object.keys(p.preset).length] = {}; DIRTY[key] = true; rerenderCard(key); }
+function removePreset(key, i, name) { readFormToTool(key); const p = toolByKey(key).params[i]; delete (p.preset||{})[name]; DIRTY[key] = true; rerenderCard(key); }
+function addPresetKv(key, i, name) { readFormToTool(key); const p = toolByKey(key).params[i]; p.preset[name]['new_' + Object.keys(p.preset[name]).length] = ''; DIRTY[key] = true; rerenderCard(key); }
+function removePresetKv(key, i, name, pk) { readFormToTool(key); const p = toolByKey(key).params[i]; delete (p.preset[name]||{})[pk]; DIRTY[key] = true; rerenderCard(key); }
+function changeParamType(key, i, val) {
+  readFormToTool(key);
+  const p = toolByKey(key).params[i];
+  p.type = (val === 'none') ? null : val;
+  if (p.type === 'enum' && !p.mapping) p.mapping = {};
+  if (p.type === 'preset' && !p.preset) p.preset = {};
+  DIRTY[key] = true; rerenderCard(key);
+}
+function insertRef(key, refKey) {
+  const ta = document.querySelector(`textarea[data-k="${cssSelector(key)}"][data-f="description"]`);
+  if (!ta) return;
+  const ref = '`' + refKey + '`';
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + ref + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + ref.length;
+  ta.focus();
+  readFormToTool(key);
+}
+
+function rerenderCard(key) {
+  // re-render just this card, preserve open state
+  const old = document.getElementById('card-' + cssEscape(key));
+  const wasOpen = old && old.hasAttribute('open');
+  const tpl = document.createElement('div');
+  tpl.innerHTML = renderCard(toolByKey(key));
+  const fresh = tpl.firstElementChild;
+  if (wasOpen) fresh.setAttribute('open', '');
+  old.replaceWith(fresh);
+  wireCard(fresh, key);
+}
+
+function wireCard(root, key) {
+  root.addEventListener('input', e => {
+    if (e.target.matches('input, textarea, select')) {
+      readFormToTool(key);
+      // update name preview live
+      const t = toolByKey(key);
+      const pv = root.querySelector('.preview');
+      if (pv) pv.textContent = `mcp__${t.toolset}__${t.as || t.tool}`;
+      const head = root.querySelector('summary .param-head');
+      if (head) head.textContent = t.as || t.tool;
+    }
+  });
+}
+
+async function saveTool(key) {
+  readFormToTool(key);
+  const t = toolByKey(key);
+  // Submit all params (read-only _-prefixed fields are stripped server-side).
+  // Only emit mapping/preset when the param's type actually uses them.
+  const body = {
+    as: t.as || null,
+    toolset: t.toolset,
+    hide: !!t.hide,
+    description: t.description || null,
+    params: (t.params || []).map(p => ({
+      name: p.name,
+      map_from: p.map_from || null,
+      hidden: !!p.hidden,
+      default: p.default,
+      type: p.type || null,
+      mapping: p.type === 'enum' ? (p.mapping || {}) : null,
+      preset: p.type === 'preset' ? (p.preset || {}) : null,
+    })),
+  };
+  const st = document.getElementById('st-' + cssEscape(key));
+  st.innerHTML = '<span class="muted">saving…</span>';
+  const res = await api('/api/expose/' + encodeURIComponent(key).replace(/%2F/gi, '/'), {method: 'PUT', body: JSON.stringify(body)});
+  if (res.ok) {
+    st.innerHTML = '<span class="badge ok">saved ✓</span>';
+    DIRTY[key] = false;
+    await loadTools();   // reload to reflect merged state + drop dirty border
+  } else {
+    const d = await res.json().catch(() => ({error: 'failed'}));
+    st.innerHTML = `<span class="badge err">error</span> <span style="color:var(--err);">${esc(d.error || 'failed')}</span>`;
+  }
+}
+
+async function revertTool(key) { DIRTY[key] = false; await loadTools(); }
+async function deleteTool(key) {
+  if (!confirm(`Delete ${key}? This removes it from all toolsets.`)) return;
+  const res = await api('/api/expose/' + encodeURIComponent(key).replace(/%2F/gi, '/'), {method: 'DELETE'});
+  if (res.ok) { await loadTools(); loadToolsets(); }
+  else { const d = await res.json().catch(()=>({})); alert('Delete failed: ' + (d.error || res.status)); }
+}
+
+function cssEscape(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, m => '_' + m.charCodeAt(0)); }
+function cssSelector(s) { return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'); }
+
+// ============ Toolsets ============
 async function loadToolsets() {
   const res = await api('/api/toolsets');
   const data = await res.json();
@@ -167,22 +517,20 @@ async function loadToolsets() {
     html += '</div></details>';
   }
   el.innerHTML = html;
-  // Populate the add-server toolset datalist (suggestions only — field is still
-  // freely typeable for new toolset names).
   const dl = document.getElementById('toolset-options');
   dl.innerHTML = data.map(t => `<option value="${t.toolset}">`).join('');
 }
 
-// ---- preview (all tools, default format) ----
+// ============ Preview ============
 async function loadPreview() {
   const res = await api('/api/tools');
   const tools = await res.json();
   document.querySelector('#preview tbody').innerHTML = tools.map(t =>
-    `<tr><td><code>${t.name}</code></td><td>${(t.description||'').replace(/</g,'&lt;')}</td><td><pre>${JSON.stringify(t.inputSchema, null, 2)}</pre></td></tr>`
+    `<tr><td><code>${t.name}</code></td><td>${esc(t.description||'')}</td><td><pre>${esc(JSON.stringify(t.inputSchema, null, 2))}</pre></td></tr>`
   ).join('') || '<tr><td colspan=3 class="muted">No tools.</td></tr>';
 }
 
-// ---- upstreams: test + raw tools ----
+// ============ Upstreams ============
 async function loadUpstreams() {
   const res = await api('/api/upstreams');
   const names = await res.json();
@@ -201,25 +549,22 @@ async function testUpstream(name) {
   box.innerHTML = '<span class="muted">testing…</span>';
   const res = await api('/api/upstreams/' + encodeURIComponent(name) + '/test', {method:'POST', body:'{}'});
   const d = await res.json();
-  if (d.error && !d.ok) {
-    box.innerHTML = `<span class="badge err">FAIL</span> ${d.latency_ms}ms — <code>${d.error}</code>`;
-    return;
-  }
+  if (d.error && !d.ok) { box.innerHTML = `<span class="badge err">FAIL</span> ${d.latency_ms}ms — <code>${esc(d.error)}</code>`; return; }
   const badge = d.ok ? '<span class="badge ok">OK</span>' : '<span class="badge err">FAIL</span>';
-  const list = d.tools.map(t => `<code>${t.name}</code>`).join(' ');
+  const list = d.tools.map(t => `<code>${esc(t.name)}</code>`).join(' ');
   box.innerHTML = `${badge} ${d.latency_ms}ms · ${d.tool_count} tools <details><summary>raw names</summary>${list || '<span class=muted>none</span>'}</details>`;
 }
 async function rawTools(name) {
   const box = document.getElementById('up-' + name);
   const res = await api('/api/upstreams/' + encodeURIComponent(name) + '/tools');
   const d = await res.json();
-  if (d.error) { box.innerHTML = `<span class="badge err">ERR</span> ${d.error}`; return; }
+  if (d.error) { box.innerHTML = `<span class="badge err">ERR</span> ${esc(d.error)}`; return; }
   box.innerHTML = d.tools.map(t =>
-    `<details><summary><code>${t.name}</code> — ${(t.description||'').slice(0,80)}</summary><pre>${JSON.stringify(t.inputSchema, null, 2)}</pre></details>`
+    `<details><summary><code>${esc(t.name)}</code> — ${esc((t.description||'').slice(0,80))}</summary><pre>${esc(JSON.stringify(t.inputSchema, null, 2))}</pre></details>`
   ).join('') || '<span class="muted">no tools</span>';
 }
 
-// ---- add server ----
+// ============ Add server ============
 async function addServer() {
   const json_text = document.getElementById('add-json').value;
   const toolset = document.getElementById('add-toolset').value || null;
@@ -227,14 +572,14 @@ async function addServer() {
   stat.textContent = 'adding…';
   const res = await api('/api/add-server', {method:'POST', body: JSON.stringify({json_text, toolset})});
   const d = await res.json();
-  if (!res.ok) { stat.innerHTML = '<span style="color:var(--err)">Error: ' + (d.error || JSON.stringify(d)) + '</span>'; return; }
+  if (!res.ok) { stat.innerHTML = '<span style="color:var(--err)">Error: ' + esc(d.error || JSON.stringify(d)) + '</span>'; return; }
   const ok = (d.added||[]).map(a => `${a.server} (${a.tools.length} tools → toolset ${a.toolset||'default'})`).join(', ');
   const errs = (d.errors||[]).map(e => `${e.server}: ${e.error}`).join('; ');
-  stat.innerHTML = `<span style="color:var(--ok)">Added: ${ok || 'none'}</span>${errs ? '<br><span style="color:var(--err)">Errors: ' + errs + '</span>' : ''}`;
+  stat.innerHTML = `<span style="color:var(--ok)">Added: ${ok || 'none'}</span>${errs ? '<br><span style="color:var(--err)">Errors: ' + esc(errs) + '</span>' : ''}`;
   loadToolsets();
 }
 
-// ---- config editor + tool-insertion picker ----
+// ============ YAML editor + tool picker ============
 async function loadConfig() {
   const res = await api('/api/config');
   const data = await res.json();
@@ -242,17 +587,10 @@ async function loadConfig() {
   loadToolPicker();
 }
 async function loadToolPicker() {
-  // Fan out per-upstream raw tools to build a key list for backtick insertion.
-  const r = await api('/api/upstreams');
-  const names = await r.json();
-  const picks = [];
-  for (const n of names) {
-    const rr = await api('/api/upstreams/' + encodeURIComponent(n) + '/tools');
-    const dd = await rr.json();
-    if (dd.tools) for (const t of dd.tools) picks.push(`${n}/${t.name}`);
-  }
-  document.getElementById('tool-picker').innerHTML = picks.map(k =>
-    `<span class="tool-item" onclick="insertKey('${k}')">${k}</span>`).join(' ');
+  const res = await api('/api/expose');
+  const data = await res.json();
+  document.getElementById('tool-picker').innerHTML = (data || []).map(t =>
+    `<span class="tool-item" onclick="insertKey('${t.key}')">${t.key}</span>`).join(' ');
 }
 function insertKey(key) {
   const ta = document.getElementById('config-text');
@@ -266,17 +604,11 @@ async function saveConfig() {
   const text = document.getElementById('config-text').value;
   const res = await api('/api/config', {method:'POST', body: text, headers:{'Content-Type':'text/plain'}});
   const stat = document.getElementById('config-status');
-  if (res.ok) {
-    stat.textContent = 'Saved & reloaded ✓';
-    stat.style.color = 'var(--ok)';
-    loadPreview(); loadToolsets();
-  } else {
-    stat.textContent = 'Error: ' + (await res.text());
-    stat.style.color = 'var(--err)';
-  }
+  if (res.ok) { stat.textContent = 'Saved & reloaded ✓'; stat.style.color = 'var(--ok)'; loadPreview(); loadToolsets(); }
+  else { stat.textContent = 'Error: ' + (await res.text()); stat.style.color = 'var(--err)'; }
 }
 
-// ---- keys ----
+// ============ Keys ============
 async function loadKeys() {
   const res = await api('/api/keys');
   const data = await res.json();
@@ -290,7 +622,7 @@ async function loadKeys() {
     for (const k of pool.keys) {
       const status = k.paused ? '<span style="color:var(--err)">Paused</span>' : '<span style="color:var(--ok)">Active</span>';
       const action = k.paused ? `<button onclick="resumeKey('${name}', ${k.index})">Resume</button>` : '—';
-      html += `<tr><td>${k.index}</td><td><code>${k.key}</code></td><td>${status}</td><td>${action}</td></tr>`;
+      html += `<tr><td>${k.index}</td><td><code>${esc(k.key)}</code></td><td>${status}</td><td>${action}</td></tr>`;
     }
     html += '</tbody></table>';
   }
@@ -303,9 +635,9 @@ async function resumeKey(upstream, index) {
   if (res.ok) loadKeys(); else alert('Failed: ' + (await res.text()));
 }
 
-// initial load
+// ============ initial load ============
+loadTools();
 loadToolsets();
-loadPreview();
 </script>
 </body>
 </html>
