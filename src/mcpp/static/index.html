@@ -536,10 +536,37 @@ async function loadToolsets() {
   if (hint) hint.textContent = getToken()
     ? 'token 已带进下方配置'
     : (location.origin.includes('127.0.0.1') ? '' : '⚠ 未设 token,导入配置不含鉴权');
-  renderToolsetImports();
+  await renderToolsetImports();
 }
 
-function renderToolsetImports() {
+let PRESETS = null;
+async function loadPresets() {
+  if (PRESETS) return PRESETS;
+  const r = await api('/api/client-presets');
+  PRESETS = await r.json();
+  return PRESETS;
+}
+
+// Render a connect-mode template by substituting placeholders.
+// {token} is the raw token (empty if none). {token_query} is "?token=<t>" or
+// "" — for url appendage on clients that can't send headers. {token_header}
+// is a JSON headers fragment or "" — for JSON configs where it must collapse.
+function renderTemplate(tpl, vars, hasToken) {
+  const token = hasToken ? vars.token : '';
+  const tokenQuery = hasToken ? '?token=' + encodeURIComponent(vars.token) : '';
+  const tokenHeader = hasToken
+    ? ', "headers": {"Authorization": "Bearer ' + vars.token + '"}'
+    : '';
+  return tpl
+    .replaceAll('{origin}', vars.origin)
+    .replaceAll('{toolset}', vars.toolset)
+    .replaceAll('{endpoint}', vars.endpoint)
+    .replaceAll('{token}', token)
+    .replaceAll('{token_query}', tokenQuery)
+    .replaceAll('{token_header}', tokenHeader);
+}
+
+async function renderToolsetImports() {
   const el = document.getElementById('toolsets-content');
   const sel = document.getElementById('ts-select');
   if (!TOOLSETS.length) { el.innerHTML = '<p class="muted">No toolsets. Add a server first.</p>'; return; }
@@ -547,76 +574,42 @@ function renderToolsetImports() {
   const ts = TOOLSETS.find(t => t.toolset === tsName) || TOOLSETS[0];
   if (sel) sel.value = ts.toolset;
 
-  const origin = location.origin;
-  const token = getToken();
-  // For each client: endpoint path + import config text.
-  const ep = (client) => `${origin}/${ts.toolset}/${client === 'default' ? 'mcp' : client + '/mcp'}`;
-  const authHeaders = token ? {Authorization: 'Bearer ' + token} : null;
-  const qUrl = (client) => ep(client) + (token ? '?token=' + encodeURIComponent(token) : '');
+  const p = await loadPresets();
+  const namings = p.naming_modes || {};
+  const connects = p.connect_modes || {};
+  const clients = p.clients || {};
 
-  const blocks = [
-    {
-      name: 'Claude Code / Claude Desktop',
-      file: '~/.claude.json 或 claude_desktop_config.json',
-      cfg: {
-        mcpServers: {
-          [ts.toolset]: { type: 'http', url: qUrl('claude'), ...(token ? { headers: authHeaders } : {}) },
-        },
-      },
-      fmt: '工具名: mcp__' + ts.toolset + '__<tool>',
-    },
-    {
-      name: 'Cursor',
-      file: '~/.cursor/mcp.json',
-      cfg: {
-        mcpServers: {
-          [ts.toolset]: { url: qUrl('cursor'), transport: { type: 'streamableHttp' }, ...(token ? { headers: authHeaders } : {}) },
-        },
-      },
-      fmt: '工具名: mcp_' + ts.toolset + '_<tool>',
-    },
-    {
-      name: 'VS Code / GitHub Copilot',
-      file: '.vscode/mcp.json',
-      cfg: {
-        servers: {
-          [ts.toolset]: { type: 'http', url: qUrl('claude'), ...(token ? { headers: authHeaders } : {}) },
-        },
-      },
-      fmt: '工具名: mcp__' + ts.toolset + '__<tool>',
-    },
-    {
-      name: '通用 / curl',
-      file: 'JSON-RPC over HTTP',
-      cfg: null,
-      raw: `# tools/list\ncurl -X POST ${ep('claude')}${token ? " -H 'Authorization: Bearer " + token + "'" : ''} \\
-  -H 'Content-Type: application/json' \\
-  -H 'Accept: application/json, text/event-stream' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`,
-      fmt: 'endpoint: ' + ep('claude'),
-    },
-  ];
+  const token = getToken() || '';
+  const hasToken = !!getToken();
 
+  // Per client: resolve endpoint from its naming mode, then render the connect template.
   let html = `<h3 style="margin-top:.2rem;">${esc(ts.toolset)} ${ts.default ? '<span class="badge ok">default</span>' : ''} <small>${ts.tools.length} tools</small></h3>`;
   html += '<details><summary>包含的工具</summary><div>' +
     ts.tools.map(k => `<code>${esc(k)}</code>`).join(' ') + '</div></details>';
-  let bi = 0;
+
   const snippets = [];
-  for (const b of blocks) {
-    const text = b.cfg ? JSON.stringify(b.cfg, null, 2) : b.raw;
-    const id = `cp-${ts.toolset}-${bi++}`;
+  let bi = 0;
+  for (const [cname, spec] of Object.entries(clients)) {
+    const nmode = namings[spec.naming];
+    const cmode = connects[spec.connect];
+    if (!nmode || !cmode) continue;
+    // endpoint_path looks like "/{toolset}/claude/mcp" (or "/mcp" for default).
+    const epPath = (nmode.endpoint_path || '/{toolset}/default/mcp').replace('{toolset}', ts.toolset);
+    const endpoint = location.origin + epPath;
+    const vars = { origin: location.origin, toolset: ts.toolset, endpoint, token };
+    const text = renderTemplate(cmode.template, vars, hasToken);
+    const fmtPill = nmode.sample ? nmode.sample.replace('{server}', ts.toolset).replace('{tool}', '<tool>') : '';
+    const id = `cp-${bi++}`;
     snippets.push([id, text]);
     html += `<div class="imp-block">
-      <div class="imp-head"><b>${esc(b.name)}</b> <span class="muted">${esc(b.file)}</span>
-        <span class="pill">${esc(b.fmt || '')}</span>
+      <div class="imp-head"><b>${esc(cname)}</b> <span class="muted">${esc(cmode.file || '')}</span>
+        <span class="pill">${esc(fmtPill)}</span>
         <button id="${id}">复制</button>
       </div>
       <pre>${esc(text)}</pre>
     </div>`;
   }
   el.innerHTML = html;
-  // wire copy buttons (text stored in JS, not in the DOM attribute, to avoid
-  // quoting headaches with quotes/newlines inside JSON-RPC payloads).
   for (const [id, text] of snippets) {
     const btn = document.getElementById(id);
     if (btn) btn.onclick = () => copyText(text).then(() => { btn.textContent = '已复制 ✓'; setTimeout(() => btn.textContent = '复制', 1200); });

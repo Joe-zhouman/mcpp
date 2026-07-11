@@ -1,0 +1,170 @@
+# mcpp client presets — how each MCP client connects + names tools.
+#
+# Three sections:
+#   naming_modes  — tool-name format + the endpoint that serves it
+#   connect_modes — import-config templates (JSON/TOML/YAML text with placeholders)
+#   clients       — each client references one naming + one connect mode
+#
+# Placeholders in connect templates:
+#   {origin}        host origin, e.g. http://10.0.0.1:9020
+#   {toolset}       the aggregated server name
+#   {endpoint}      full URL {origin}/{toolset}/{naming}/mcp
+#   {token}         the gateway auth token (empty string if none)
+#   {token_query}   "?token=<token>" when a token is set, else "" — for clients
+#                   that can't send headers (append to the url).
+#   {token_header}  a JSON headers fragment (', "headers": {...}') when a token
+#                   is set, else "" — for JSON configs where the block collapses.
+#
+# Add a client: append one entry under `clients`. Add a naming/connect mode: append
+# under the relevant section. clients.py loads this at import time.
+
+# ───────────────────────── naming modes ─────────────────────────
+# Each defines the tool-name shape clients see. The mode name is also the
+# endpoint path segment: /<toolset>/<naming>/mcp.
+naming_modes:
+  claude:
+    format: "mcp__{server}__{tool}"
+    sample: "mcp__search__papers"
+  cursor:
+    format: "mcp_{server}_{tool}"
+    sample: "mcp_search_papers"
+  opencode:
+    # <server>_<tool> — single underscore, no mcp prefix.
+    # OpenCode and its many forks share this.
+    format: "{server}_{tool}"
+    sample: "search_papers"
+  coder:
+    # <server>__<tool> — double underscore, no mcp prefix.
+    format: "{server}__{tool}"
+    sample: "search__papers"
+  codex:
+    # <server>::<tool> — double colon. Codex's real scheme is a namespace+name
+    # pair in the Responses API (not string concat); the :: form is a clean,
+    # model-legible stand-in that round-trips unambiguously.
+    format: "{server}::{tool}"
+    sample: "search::papers"
+  default:
+    # bare tool name, no prefix
+    format: "{tool}"
+    sample: "papers"
+
+# ───────────────────────── connect modes ─────────────────────────
+# Import config the user pastes into their client. Each is a text template
+# rendered with the placeholders above.
+connect_modes:
+  claude:
+    file: "~/.claude.json 或 claude_desktop_config.json"
+    template: |
+      {
+        "mcpServers": {
+          "{toolset}": {
+            "type": "http",
+            "url": "{endpoint}{token_query}"{token_header}
+          }
+        }
+      }
+  cursor:
+    file: "~/.cursor/mcp.json"
+    template: |
+      {
+        "mcpServers": {
+          "{toolset}": {
+            "url": "{endpoint}{token_query}",
+            "transport": { "type": "streamableHttp" }{token_header}
+          }
+        }
+      }
+  opencode:
+    # opencode.json — note top-level key is `mcp` (not mcpServers), type: remote.
+    file: "opencode.json 或 ~/.config/opencode/opencode.json"
+    template: |
+      {
+        "mcp": {
+          "{toolset}": {
+            "type": "remote",
+            "url": "{endpoint}"{token_header}
+          }
+        }
+      }
+  codex:
+    # TOML — ~/.codex/config.toml
+    file: "~/.codex/config.toml"
+    template: |
+      [mcp_servers.{toolset}]
+      url = "{endpoint}"
+      # put the token in an env var, then reference it:
+      bearer_token_env_var = "MCP_TOKEN"
+  hermes:
+    # YAML — ~/.hermes/config.yaml
+    file: "~/.hermes/config.yaml"
+    template: |
+      mcp_servers:
+        {toolset}:
+          url: "{endpoint}"
+          headers:
+            Authorization: "Bearer {token}"
+  openclaw:
+    # JSON nested under mcp.servers
+    file: "~/.openclaw/openclaw.json"
+    template: |
+      {
+        "mcp": {
+          "servers": {
+            "{toolset}": {
+              "url": "{endpoint}",
+              "transport": "streamable-http"{token_header}
+            }
+          }
+        }
+      }
+
+# ───────────────────────── clients ─────────────────────────
+# Each client picks one naming mode + one connect mode.
+# TODO/uncertain entries are marked and should be verified against upstream docs.
+clients:
+  claude-code:
+    naming: claude
+    connect: claude
+  claude-desktop:
+    naming: claude
+    connect: claude
+  cursor:
+    naming: cursor
+    connect: cursor
+  opencode:
+    naming: opencode
+    connect: opencode
+  reasonix:
+    # naming is claude-like (mcp__server__tool); connect is TOML like codex.
+    naming: claude
+    connect: codex
+  coder:
+    # Coder Agents use serverName__toolName.
+    naming: coder
+    connect: claude
+  trae:
+    # TODO: tool-naming format not documented as of research; assuming cursor-like.
+    # Connect is mcpServers JSON like Claude/Cursor.
+    naming: cursor
+    connect: claude
+  codex:
+    # Codex uses namespace+name pair; :: stand-in. Connect is TOML.
+    naming: codex
+    connect: codex
+  hermes:
+    # mcp_<server>_<tool>; YAML config.
+    naming: cursor
+    connect: hermes
+  pi:
+    # server_tool (cursor-like single underscore without mcp prefix = opencode mode);
+    # connect is mcpServers JSON.
+    naming: opencode
+    connect: claude
+  workbuddy:
+    # mcp__server__tool (claude-like); mcpServers JSON. Same ecosystem as CodeBuddy.
+    naming: claude
+    connect: claude
+  openclaw:
+    # server__tool (coder mode); nested mcp.servers JSON.
+    naming: coder
+    connect: openclaw

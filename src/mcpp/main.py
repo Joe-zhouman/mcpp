@@ -20,7 +20,7 @@ from mcpp.config import Config, ExposeEntry, AuthConfig, UpstreamConfig, ParamTr
 from mcpp.upstream import HttpTransport, StdioTransport, Tool
 from mcpp.keypool import KeyPool
 from mcpp.transform import transform_tools, param_transform_value
-from mcpp.clients import REGISTRY, CLIENT_ROUTES, get_format
+from mcpp.clients import REGISTRY, CLIENT_ROUTES, LEGACY_ALIASES, get_format, presets as load_presets
 
 logger = logging.getLogger("mcpp")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -425,13 +425,23 @@ def _make_mcp_handler(client_id: str):
     return handler
 
 
-# Register one MCP endpoint per client format at /{toolset}/{client}/mcp.
-# Adding a new client = one entry in clients.CLIENT_ROUTES + REGISTRY.
-# toolset is a dynamic path segment resolved per-request against config.
-for _cid in CLIENT_ROUTES:
+# Register one MCP endpoint per naming mode at its preset-defined path.
+# CLIENT_ROUTES values already contain the {toolset} placeholder, e.g.
+# "/{toolset}/claude/mcp". Adding a naming mode = one preset entry; this
+# loop picks it up automatically.
+for _cid, _path in CLIENT_ROUTES.items():
     app.add_api_route(
-        "/{toolset}/" + CLIENT_ROUTES[_cid].lstrip("/"),
+        _path,
         _make_mcp_handler(_cid),
+        methods=["POST"],
+        dependencies=AUTH,
+    )
+
+# Legacy bare-path aliases (e.g. /mcp) → default naming on the default toolset.
+for _alias_path, _naming_id in LEGACY_ALIASES.items():
+    app.add_api_route(
+        _alias_path,
+        _make_mcp_handler(_naming_id),
         methods=["POST"],
         dependencies=AUTH,
     )
@@ -550,6 +560,29 @@ async def list_toolsets(request: Request):
         {"toolset": name, "tools": keys, "default": name == config.server_name}
         for name, keys in groups.items()
     ])
+
+
+@app.get("/api/client-presets", dependencies=AUTH)
+async def get_client_presets(request: Request):
+    """Return the client preset catalogue for the Toolsets UI.
+
+    Adds each naming mode's endpoint path (from CLIENT_ROUTES) so the frontend
+    can compute the right URL per client without hardcoding route shapes.
+    The frontend fills {origin}/{toolset}/{token} into the connect templates.
+    """
+    raw = load_presets()
+    naming_modes = {}
+    for nid, mode in (raw.get("naming_modes") or {}).items():
+        naming_modes[nid] = {
+            "format": mode.get("format"),
+            "sample": mode.get("sample"),
+            "endpoint_path": CLIENT_ROUTES.get(nid),
+        }
+    return JSONResponse({
+        "naming_modes": naming_modes,
+        "connect_modes": raw.get("connect_modes") or {},
+        "clients": raw.get("clients") or {},
+    })
 
 
 @app.get("/api/upstreams/{name}/tools", dependencies=AUTH)
