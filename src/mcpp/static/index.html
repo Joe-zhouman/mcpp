@@ -84,8 +84,19 @@
 </div>
 
 <div id="preview" class="panel">
-  <button class="primary" onclick="loadPreview()">Refresh</button>
-  <table><thead><tr><th>Name</th><th>Description</th><th>Schema</th></tr></thead><tbody></tbody></table>
+  <div class="row" style="margin-bottom:.5rem; align-items:center;">
+    <span class="muted">预览客户端看到的对外形态:</span>
+    <label>toolset <select id="pv-toolset" onchange="loadPreview()"></select></label>
+    <label>client <select id="pv-client" onchange="loadPreview()">
+      <option value="claude">claude (mcp__s__t)</option>
+      <option value="cursor">cursor (mcp_s_t)</option>
+      <option value="default">default (bare)</option>
+    </select></label>
+    <button onclick="loadPreview()">Refresh</button>
+    <span id="pv-endpoint" class="endpoint"></span>
+  </div>
+  <table><thead><tr><th>对外名</th><th>Description</th><th>Schema (客户端所见)</th></tr></thead><tbody></tbody></table>
+</div>
 </div>
 
 <div id="upstreams" class="panel">
@@ -522,10 +533,27 @@ async function loadToolsets() {
 
 // ============ Preview ============
 async function loadPreview() {
-  const res = await api('/api/tools');
+  // Populate toolset dropdown from /api/toolsets (once).
+  const tsSel = document.getElementById('pv-toolset');
+  if (!tsSel.options.length) {
+    const r = await api('/api/toolsets');
+    const ts = await r.json();
+    tsSel.innerHTML = '<option value="">(全部)</option>' +
+      ts.map(t => `<option value="${t.toolset}">${t.toolset}${t.default?' (default)':''}</option>`).join('');
+  }
+  const toolset = tsSel.value;
+  const client = document.getElementById('pv-client').value;
+  const qs = new URLSearchParams({client});
+  if (toolset) qs.set('toolset', toolset);
+  // Show the equivalent real endpoint the client would hit.
+  const ep = '/' + (toolset || '<toolset>') + '/' + (client === 'default' ? 'mcp' : client + '/mcp');
+  document.getElementById('pv-endpoint').textContent = ep;
+
+  const res = await api('/api/tools?' + qs.toString());
   const tools = await res.json();
-  document.querySelector('#preview tbody').innerHTML = tools.map(t =>
-    `<tr><td><code>${t.name}</code></td><td>${esc(t.description||'')}</td><td><pre>${esc(JSON.stringify(t.inputSchema, null, 2))}</pre></td></tr>`
+  document.querySelector('#preview tbody').innerHTML = (tools || []).map(t =>
+    `<tr><td><code>${esc(t.name)}</code></td><td>${esc(t.description || '')}</td>` +
+    `<td><pre>${esc(JSON.stringify(t.inputSchema || {}, null, 2))}</pre></td></tr>`
   ).join('') || '<tr><td colspan=3 class="muted">No tools.</td></tr>';
 }
 

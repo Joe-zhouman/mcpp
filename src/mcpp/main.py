@@ -508,8 +508,20 @@ async def update_config(request: Request):
 
 @app.get("/api/tools", dependencies=AUTH)
 async def list_tools_preview(request: Request):
+    """Preview the downstream tool surface — what a client actually sees.
+
+    Optional query params mirror the real MCP routes:
+      ?toolset=<name>   filter to one aggregated server (default: all)
+      ?client=<id>      name format: claude (mcp__s__t), cursor (mcp_s_t),
+                        default (bare name). Default: default.
+    """
     config: Config = request.app.state.config
-    all_tools = await _fetch_all_tools(request.app, config)
+    toolset = request.query_params.get("toolset")
+    client = request.query_params.get("client", "default")
+    # The "mcpp" alias resolves to the default toolset, like the route does.
+    if toolset == "mcpp":
+        toolset = config.server_name
+    all_tools = await _fetch_all_tools(request.app, config, client=client, toolset=toolset)
     return JSONResponse(all_tools)
 
 
