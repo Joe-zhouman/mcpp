@@ -52,6 +52,10 @@
   .pill { font-size: .75rem; padding: .1rem .4rem; border-radius: 8px; background: #eee; color: #555; }
   .dirty { border-left: 3px solid var(--warn); }
   .inline-status { font-size: .82rem; margin-left: auto; }
+  .imp-block { border: 1px solid var(--border); border-radius: 5px; margin: .5rem 0; background: #fff; }
+  .imp-head { padding: .4rem .6rem; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .imp-head .muted { font-size: .8rem; }
+  .imp-block pre { margin: 0; max-height: 260px; border: none; background: #fff; }
 </style>
 </head>
 <body>
@@ -78,8 +82,11 @@
 </div>
 
 <div id="toolsets" class="panel">
-  <p class="muted">Each toolset is one对外 MCP server. Point a client at the endpoint for its format (claude = <code>mcp__server__tool</code>, cursor = <code>mcp_server_tool</code>, default = bare name).</p>
-  <button class="primary" onclick="loadToolsets()">Refresh</button>
+  <div class="row" style="margin-bottom:.5rem; align-items:center;">
+    <label>toolset <select id="ts-select" onchange="renderToolsetImports()"></select></label>
+    <button onclick="loadToolsets()">Refresh</button>
+    <span id="ts-token-hint" class="muted"></span>
+  </div>
   <div id="toolsets-content"></div>
 </div>
 
@@ -508,27 +515,117 @@ function cssEscape(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, m => '_' + m
 function cssSelector(s) { return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'); }
 
 // ============ Toolsets ============
+let TOOLSETS = [];
 async function loadToolsets() {
   const res = await api('/api/toolsets');
-  const data = await res.json();
+  TOOLSETS = await res.json();
+  // Populate the add-server toolset datalist (suggestions).
+  const dl = document.getElementById('toolset-options');
+  if (dl) dl.innerHTML = TOOLSETS.map(t => `<option value="${t.toolset}">`).join('');
+  // Populate the toolset switcher dropdown.
+  const sel = document.getElementById('ts-select');
+  if (sel) {
+    const prev = sel.value;
+    sel.innerHTML = TOOLSETS.map(t =>
+      `<option value="${t.toolset}">${t.toolset}${t.default ? ' (default)' : ''} — ${t.tools.length} tools</option>`
+    ).join('') || '<option value="">(no toolsets)</option>';
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  // Token hint
+  const hint = document.getElementById('ts-token-hint');
+  if (hint) hint.textContent = getToken()
+    ? 'token 已带进下方配置'
+    : (location.origin.includes('127.0.0.1') ? '' : '⚠ 未设 token,导入配置不含鉴权');
+  renderToolsetImports();
+}
+
+function renderToolsetImports() {
   const el = document.getElementById('toolsets-content');
-  if (!data.length) { el.innerHTML = '<p class="muted">No toolsets.</p>'; return; }
-  let html = '';
-  for (const ts of data) {
-    const tag = ts.default ? ' <span class="badge ok">default</span>' : '';
-    html += `<h3>${ts.toolset} ${tag} <small>(${ts.tools.length} tools)</small></h3>`;
-    html += `<div>Endpoints:
-      <div class="endpoint">/${ts.toolset}/claude/mcp</div>
-      <div class="endpoint">/${ts.toolset}/cursor/mcp</div>
-      <div class="endpoint">/${ts.toolset}/mcp</div>
+  const sel = document.getElementById('ts-select');
+  if (!TOOLSETS.length) { el.innerHTML = '<p class="muted">No toolsets. Add a server first.</p>'; return; }
+  const tsName = sel && sel.value;
+  const ts = TOOLSETS.find(t => t.toolset === tsName) || TOOLSETS[0];
+  if (sel) sel.value = ts.toolset;
+
+  const origin = location.origin;
+  const token = getToken();
+  // For each client: endpoint path + import config text.
+  const ep = (client) => `${origin}/${ts.toolset}/${client === 'default' ? 'mcp' : client + '/mcp'}`;
+  const authHeaders = token ? {Authorization: 'Bearer ' + token} : null;
+  const qUrl = (client) => ep(client) + (token ? '?token=' + encodeURIComponent(token) : '');
+
+  const blocks = [
+    {
+      name: 'Claude Code / Claude Desktop',
+      file: '~/.claude.json 或 claude_desktop_config.json',
+      cfg: {
+        mcpServers: {
+          [ts.toolset]: { type: 'http', url: qUrl('claude'), ...(token ? { headers: authHeaders } : {}) },
+        },
+      },
+      fmt: '工具名: mcp__' + ts.toolset + '__<tool>',
+    },
+    {
+      name: 'Cursor',
+      file: '~/.cursor/mcp.json',
+      cfg: {
+        mcpServers: {
+          [ts.toolset]: { url: qUrl('cursor'), transport: { type: 'streamableHttp' }, ...(token ? { headers: authHeaders } : {}) },
+        },
+      },
+      fmt: '工具名: mcp_' + ts.toolset + '_<tool>',
+    },
+    {
+      name: 'VS Code / GitHub Copilot',
+      file: '.vscode/mcp.json',
+      cfg: {
+        servers: {
+          [ts.toolset]: { type: 'http', url: qUrl('claude'), ...(token ? { headers: authHeaders } : {}) },
+        },
+      },
+      fmt: '工具名: mcp__' + ts.toolset + '__<tool>',
+    },
+    {
+      name: '通用 / curl',
+      file: 'JSON-RPC over HTTP',
+      cfg: null,
+      raw: `# tools/list\ncurl -X POST ${ep('claude')}${token ? " -H 'Authorization: Bearer " + token + "'" : ''} \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json, text/event-stream' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`,
+      fmt: 'endpoint: ' + ep('claude'),
+    },
+  ];
+
+  let html = `<h3 style="margin-top:.2rem;">${esc(ts.toolset)} ${ts.default ? '<span class="badge ok">default</span>' : ''} <small>${ts.tools.length} tools</small></h3>`;
+  html += '<details><summary>包含的工具</summary><div>' +
+    ts.tools.map(k => `<code>${esc(k)}</code>`).join(' ') + '</div></details>';
+  let bi = 0;
+  const snippets = [];
+  for (const b of blocks) {
+    const text = b.cfg ? JSON.stringify(b.cfg, null, 2) : b.raw;
+    const id = `cp-${ts.toolset}-${bi++}`;
+    snippets.push([id, text]);
+    html += `<div class="imp-block">
+      <div class="imp-head"><b>${esc(b.name)}</b> <span class="muted">${esc(b.file)}</span>
+        <span class="pill">${esc(b.fmt || '')}</span>
+        <button id="${id}">复制</button>
+      </div>
+      <pre>${esc(text)}</pre>
     </div>`;
-    html += '<details><summary>tools</summary><div>';
-    for (const k of ts.tools) html += `<code>${k}</code> `;
-    html += '</div></details>';
   }
   el.innerHTML = html;
-  const dl = document.getElementById('toolset-options');
-  dl.innerHTML = data.map(t => `<option value="${t.toolset}">`).join('');
+  // wire copy buttons (text stored in JS, not in the DOM attribute, to avoid
+  // quoting headaches with quotes/newlines inside JSON-RPC payloads).
+  for (const [id, text] of snippets) {
+    const btn = document.getElementById(id);
+    if (btn) btn.onclick = () => copyText(text).then(() => { btn.textContent = '已复制 ✓'; setTimeout(() => btn.textContent = '复制', 1200); });
+  }
+}
+
+async function copyText(s) {
+  try { await navigator.clipboard.writeText(s); }
+  catch { const ta = document.createElement('textarea'); ta.value = s; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
 }
 
 // ============ Preview ============
