@@ -2,14 +2,49 @@
 
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+No tags are cut yet — entries below are grouped by date, not version.
 
-## [Unreleased] — 0.2.0
+## Unreleased
 
-The "对外 MCP server" redesign: mcpp no longer leaks upstream names — it exposes
-aggregated, renameable MCP servers (toolsets), one endpoint per client naming
-convention, driven by a preset catalogue. Plus a real structured admin UI.
+mcpp is a thin proxy gateway for MCP tools. What started as a single `/mcp`
+endpoint with a YAML-only admin UI has become a multi-toolset aggregated
+gateway: each对外 MCP server is a renameable group of tools, served per client
+naming convention, driven by a preset catalogue, edited through a structured UI.
 
-### Added
+### 2026-07-05 — initial baseline
+
+A thin proxy gateway for MCP tools. *(this baseline has known bugs; not tagged.)*
+
+#### Added
+
+- YAML config model with typed auth (`upstreams`, `expose`, `AuthConfig`). (`cd49f89`)
+- Backtick cross-tool reference validation in descriptions. (`296cf41`)
+- API key pool with round-robin rotation and health-pause on 401/403/429. (`a091004`, `d2ef132`)
+- Upstream HTTP transport with per-request auth callback (key rotation takes
+  effect immediately). (`4325e69`)
+- Tool surface transform: backtick resolution, downstream schema builder
+  (enum / preset / hidden / default params). (`905e146`)
+- **stdio upstream transport** for local MCP servers launched as subprocesses
+  (newline-delimited JSON + Content-Length framing). (`7bb8ba6`)
+- FastAPI app with `/mcp` JSON-RPC endpoint, admin UI (tool preview, YAML
+  editor, key pool view), and structured logging. (`7352081`)
+- Integration smoke test. (`a265848`)
+
+#### Fixed
+
+- KeyError guards, admin error handling, dedup fetch, `key_at` public API,
+  env-var overrides for host/port. (`1c6c07b`)
+- `to_yaml` `by_alias`, dedup `fetch_all`, port validation, enum/preset guard. (`5aec616`)
+- Propagate upstream JSON-RPC errors; dedup display-name logic. (`e93c07e`)
+- Null JSON-RPC body guard; catch `yaml.YAMLError` in admin config save. (`d382ef8`)
+
+### 2026-07-07 → 2026-07-12 — the对外-server redesign
+
+mcpp no longer leaks upstream names. It exposes aggregated, renameable MCP
+servers (toolsets), one endpoint per client naming convention, driven by a
+preset catalogue. Plus a real structured admin UI.
+
+#### Added
 
 - **Aggregated toolset endpoints.** Each toolset is one对外 MCP server reachable
   at `/<toolset>/<client>/mcp`. Tools are renamed (`as`) and grouped by `toolset`
@@ -66,7 +101,7 @@ convention, driven by a preset catalogue. Plus a real structured admin UI.
   if missing, auto-copies `config.yaml.example`, prints local + LAN URLs,
   optional `TOKEN=yes` to generate a bearer token. (`3fcff24`)
 
-### Changed
+#### Changed
 
 - **HTTP transport speaks real MCP now** — lazy `initialize` handshake, caches
   `mcp-session-id`, sends `notifications/initialized`, carries the session id
@@ -83,44 +118,13 @@ convention, driven by a preset catalogue. Plus a real structured admin UI.
   template. `start.sh` auto-generates it on first launch. (`3fcff24`)
 - Old YAML-only config tab demoted to "YAML (advanced)".
 
-### Fixed
+#### Fixed
 
 - `add-server` tolerates the Claude-Desktop `{"mcpServers": {...}}` wrapper. (`5d0c38e`)
 - `_persist_and_reload` extracted so the YAML editor, per-entry writer, and
   add-server all share one write/rebuild path.
 
-### Docs
+#### Docs
 
 - `docs/reasonix-proposal.md` — draft on tool-transform / inter-tool graph. (`03fdaab`)
 
----
-
-## [0.1.0] — 2026-07-05
-
-Initial release: a thin proxy gateway for MCP tools.
-
-### Added
-
-- YAML config model with typed auth (`upstreams`, `expose`, `AuthConfig`). (`cd49f89`)
-- Backtick cross-tool reference validation in descriptions. (`296cf41`)
-- API key pool with round-robin rotation and health-pause on 401/403/429. (`a091004`, `d2ef132`)
-- Upstream HTTP transport with per-request auth callback (key rotation takes
-  effect immediately). (`4325e69`)
-- Tool surface transform: backtick resolution, downstream schema builder
-  (enum / preset / hidden / default params). (`905e146`)
-- **stdio upstream transport** for local MCP servers launched as subprocesses
-  (newline-delimited JSON + Content-Length framing). (`7bb8ba6`)
-- FastAPI app with `/mcp` JSON-RPC endpoint, admin UI (tool preview, YAML
-  editor, key pool view), and structured logging. (`7352081`)
-- Integration smoke test. (`a265848`)
-
-### Fixed
-
-- KeyError guards, admin error handling, dedup fetch, `key_at` public API,
-  env-var overrides for host/port. (`1c6c07b`)
-- `to_yaml` `by_alias`, dedup `fetch_all`, port validation, enum/preset guard. (`5aec616`)
-- Propagate upstream JSON-RPC errors; dedup display-name logic. (`e93c07e`)
-- Null JSON-RPC body guard; catch `yaml.YAMLError` in admin config save. (`d382ef8`)
-
-[Unreleased]: https://github.com/Joe-zhouman/mcpp/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Joe-zhouman/mcpp/releases/tag/v0.1.0
