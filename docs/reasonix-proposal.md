@@ -36,10 +36,23 @@ Why I think this is especially valuable for Reasonix (DeepSeek-native): DeepSeek
 
 This is the trick that paid off most for me when building MCP tools, so it's the one I most want your read on. Reasonix doesn't have this layer today (grepped `internal/tool`/`internal/plugin`/`internal/config` — no inter-tool reference mechanism), and upstream tools can't be edited, so it has to live in the harness.
 
-### Two supporting transforms (also in the prototype, but secondary)
+### Three supporting transforms (also in the prototype, but secondary)
 
 1. **Param pruning** — `hidden:true`+`default`; agent neither chooses nor sees them.
-2. **Continuous→discrete** — `temperature:0.0–2.0` → `style:precise|balanced|creative`.
+2. **N:1 presets** — bundle several upstream params into one downstream enum. The big one: expose `mode: fast|standard|deep` instead of making the agent pick `model` × `effort` × `temperature` separately. One choice, a whole coordinated parameter set fires underneath.
+3. **Continuous→discrete** — `temperature:0.0–2.0` → `style:precise|balanced|creative` (1:1 value mapping, lighter than a preset).
+
+Concretely, the N:1 preset looks like this in the prototype (YAML; would become toml in Reasonix):
+```yaml
+params:
+  - name: mode
+    type: preset
+    preset:
+      fast:     { model: flash,  effort: low,  temperature: 0.1 }
+      standard: { model: flash,  effort: high, temperature: 0.7 }
+      deep:     { model: pro,    effort: max,  temperature: 0.3 }
+```
+The agent sees one `mode` enum and picks semantically ("fast" vs "deep"); on `tools/call` the harness expands it back into `model`+`effort`+`temperature` for upstream. This is where the decision-space collapse is largest — 3×3×(continuous) collapsed to 3.
 
 **Questions:**
 1. Do you buy the direction?
@@ -67,4 +80,4 @@ Estimated footprint: new `internal/tool/transform` (pure funcs + unit tests), `T
 
 **Links**
 - mcpp prototype + design doc: https://gitcode.com/Joe-zhouman/mcpp
-- Long-form on why this matters more for DeepSeek: <your tweet URL>
+- Long-form on why this matters more for DeepSeek: [微信公众号](https://mp.weixin.qq.com/s/ot2tey-3ZtqBah7Gbpm4SA)
